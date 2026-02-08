@@ -88,7 +88,7 @@ if "гетеро" in text:
 
         context.chat_data["winner"] = user.id
         context.chat_data["win_time"] = datetime.now()
-          return CHOOSING_PLAYER
+        return CHOOSING_PLAYER
 
     # Рахуємо повідомлення для топу по чату
     chat_stats = context.chat_data.setdefault('chat_messages', {})
