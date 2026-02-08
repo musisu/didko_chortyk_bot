@@ -2,23 +2,19 @@
 # -*- coding: utf-8 -*-
 
 import os
-import json
 from random import shuffle, choice
-from datetime import datetime
-import pytz
+from datetime import datetime, date
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Updater, CommandHandler, MessageHandler, Filters,
     ConversationHandler, CallbackQueryHandler
 )
 import logging
-from apscheduler.schedulers.background import BackgroundScheduler
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 GUESSING, CHOOSING_PLAYER = range(2)
-STATS_FILE = "daily_stats.json"
 
 # ---------- WORDS ----------
 WORDS = []
@@ -26,73 +22,28 @@ with open("words.txt", "r", encoding="utf-8") as f:
     WORDS = [w.strip().lower() for w in f.readlines()]
 shuffle(WORDS)
 
-# ---------- HELPERS ----------
-def load_stats():
-    if not os.path.exists(STATS_FILE):
-        return {"chats": {}}
-    with open(STATS_FILE, "r", encoding="utf-8") as f:
-        return json.load(f)
+# ---------- GLOBAL DATA ----------
+wallets = {}          # {user_id: coins}
+daily_messages = {}   # {chat_id: {user_id: count}}
+SPECIAL_CHAT_ID = -5214033440  # сюди вставляєш id чату для # нарахувань
+SPECIAL_HASH_COINS = 50
 
-def save_stats(data):
-    with open(STATS_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+# ---------- UTILS ----------
+def add_coins(user_id, amount):
+    wallets[user_id] = wallets.get(user_id, 0) + amount
 
-def check_new_day(chat_data):
-    today = datetime.now(pytz.timezone("Europe/Kiev")).strftime("%Y-%m-%d")
-    if chat_data.get("date") != today:
-        chat_data["date"] = today
-        chat_data["messages"] = {}
-    return chat_data
+def sub_coins(user_id, amount):
+    wallets[user_id] = max(wallets.get(user_id, 0) - amount, 0)
 
-def count_message(update):
-    chat_id = str(update.effective_chat.id)
-    user = update.effective_user
-    data = load_stats()
-
-    if chat_id not in data["chats"]:
-        data["chats"][chat_id] = {"date": datetime.now(pytz.timezone("Europe/Kiev")).strftime("%Y-%m-%d"), "messages": {}}
-
-    chat_data = check_new_day(data["chats"][chat_id])
-    uid = str(user.id)
-    if uid not in chat_data["messages"]:
-        chat_data["messages"][uid] = {"name": user.first_name, "count": 0}
-    chat_data["messages"][uid]["count"] += 1
-    data["chats"][chat_id] = chat_data
-    save_stats(data)
-
-def show_top(update, context):
-    chat_id = str(update.effective_chat.id)
-    data = load_stats()
-    if chat_id not in data["chats"] or not data["chats"][chat_id]["messages"]:
-        update.message.reply_text("Сьогодні ще ніхто нічого не писав 🙂")
-        return
-    users = sorted(data["chats"][chat_id]["messages"].values(), key=lambda x: x["count"], reverse=True)
-    text = "🏆 Топ активності за сьогодні:\n\n"
-    for i, u in enumerate(users[:10], 1):
-        text += f"{i}. {u['name']} — {u['count']} повідомлень\n"
-    update.message.reply_text(text)
-
-def send_daily_top(bot_token):
-    bot = Updater(bot_token, use_context=True).bot
-    data = load_stats()
-    today = datetime.now(pytz.timezone("Europe/Kiev")).strftime("%Y-%m-%d")
-    for chat_id, chat_data in data["chats"].items():
-        if not chat_data["messages"]:
-            continue
-        users = sorted(chat_data["messages"].values(), key=lambda x: x["count"], reverse=True)
-        text = f"🏆 Топ активності за {chat_data['date']}:\n\n"
-        for i, u in enumerate(users[:10], 1):
-            text += f"{i}. {u['name']} — {u['count']} повідомлень\n"
-        bot.send_message(chat_id=int(chat_id), text=text)
-        # Очищаємо статистику на новий день
-        data["chats"][chat_id] = {"date": today, "messages": {}}
-    save_stats(data)
+def get_wallet(user_id):
+    return wallets.get(user_id, 0)
 
 # ---------- GAME ----------
 def start(update, context):
     if context.chat_data.get("is_playing"):
         update.message.reply_text("Гра вже почалась")
         return GUESSING
+
     user = update.message.from_user
     context.chat_data["is_playing"] = True
     context.chat_data["current_player"] = user.id
@@ -102,6 +53,7 @@ def start(update, context):
         InlineKeyboardButton("Подивитись слово", callback_data="look"),
         InlineKeyboardButton("Наступне слово", callback_data="next")
     ]]
+
     update.message.reply_text(
         f"[{user.first_name}](tg://user?id={user.id}) пояснює слово!",
         reply_markup=InlineKeyboardMarkup(keyboard),
@@ -118,18 +70,26 @@ def guesser(update, context):
     text = update.message.text.lower()
     user = update.message.from_user
 
+    # Реакція на ключові слова
     if "гетеро" in text:
-        update.message.reply_text("🍽️")
+        sub_coins(user.id, 1)
+        update.message.reply_text("ШТРАФ! -1 монета за пропаганду 👹")
         return GUESSING
     if "мальви" in text:
-        update.message.reply_text("👀")
+        update.message.reply_text("🍽️")
         return GUESSING
     if "кішпари" in text:
         update.message.reply_text("🍽️")
         return GUESSING
 
-    if context.chat_data.get("is_playing") and user.id != context.chat_data.get("current_player") and text == context.chat_data.get("current_word"):
-        update.message.reply_text(f"{user.first_name} вгадав слово!")
+    # Логіка гри
+    if (
+        context.chat_data.get("is_playing")
+        and user.id != context.chat_data.get("current_player")
+        and text == context.chat_data.get("current_word")
+    ):
+        add_coins(user.id, 5)
+        update.message.reply_text(f"{user.first_name} вгадав слово! +5 монет")
         context.chat_data["winner"] = user.id
         context.chat_data["win_time"] = datetime.now()
         return CHOOSING_PLAYER
@@ -171,17 +131,47 @@ def next_word(update, context):
         query.answer("Не можна", show_alert=True)
     return GUESSING
 
-# ---------- GLOBAL TEXT HANDLER ----------
-def global_text(update, context):
-    # Підрахунок повідомлень по чату
-    count_message(update)
-    text = update.message.text.lower()
-    if "гетеро" in text:
-        update.message.reply_text("🍽️")
-    if "мальви" in text:
-        update.message.reply_text("👀")
-    if "кішпари" in text:
-        update.message.reply_text("🍽️")
+# ---------- WALLET ----------
+def wallet(update, context):
+    user = update.message.from_user
+    coins = get_wallet(user.id)
+    update.message.reply_text(f"💰 У тебе {coins} монет")
+
+# ---------- DAILY MESSAGES ----------
+def track_daily_messages(update, context):
+    chat_id = update.effective_chat.id
+    user_id = update.message.from_user.id
+    today = date.today()
+
+    if chat_id not in daily_messages:
+        daily_messages[chat_id] = {}
+    if user_id not in daily_messages[chat_id]:
+        daily_messages[chat_id][user_id] = 0
+
+    daily_messages[chat_id][user_id] += 1
+
+# ---------- SPECIAL CHAT TAGS ----------
+def check_special_chat_message(update, context):
+    chat_id = update.effective_chat.id
+    user_id = update.message.from_user.id
+    text = update.message.text
+    if chat_id == SPECIAL_CHAT_ID and "#" in text:
+        add_coins(user_id, SPECIAL_HASH_COINS)
+        update.message.reply_text(f"🎉 +{SPECIAL_HASH_COINS} монет за повідомлення з #!")
+
+# ---------- DAILY TOP ----------
+def send_daily_top(context):
+    for chat_id, users in daily_messages.items():
+        sorted_users = sorted(users.items(), key=lambda x: x[1], reverse=True)
+        top_text = "🏆 Топ за сьогодні:\n"
+        for i, (user_id, count) in enumerate(sorted_users[:3]):
+            coins_reward = [20, 10, 5][i]
+            add_coins(user_id, coins_reward)
+            top_text += f"{i+1}. [User](tg://user?id={user_id}): {count} повідомлень (+{coins_reward} монет)\n"
+        context.bot.send_message(chat_id=chat_id, text=top_text, parse_mode="Markdown")
+
+    # Очищуємо лічильники після топу
+    daily_messages.clear()
 
 # ---------- MAIN ----------
 def main():
@@ -189,7 +179,10 @@ def main():
     updater = Updater(token, use_context=True)
     dp = updater.dispatcher
 
-    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, global_text))
+    # Основні хендлери
+    dp.add_handler(CommandHandler("wallet", wallet))
+    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, track_daily_messages))
+    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, check_special_chat_message))
 
     conv = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
@@ -207,17 +200,12 @@ def main():
         per_user=False
     )
     dp.add_handler(conv)
-    dp.add_handler(CommandHandler("top", show_top))
 
-    # ---------- SCHEDULER ----------
-    scheduler = BackgroundScheduler()
-    scheduler.add_job(
-        lambda: send_daily_top(token),
-        trigger="cron",
-        hour=0,
-        minute=0,
-        timezone=pytz.timezone("Europe/Kiev")
-    )
+    # Scheduler для щоденного топу
+    from apscheduler.schedulers.background import BackgroundScheduler
+    import pytz
+    scheduler = BackgroundScheduler(timezone=pytz.UTC)
+    scheduler.add_job(lambda: send_daily_top(updater), "cron", hour=0, minute=0)  # о 00:00 UTC
     scheduler.start()
 
     updater.start_polling()
