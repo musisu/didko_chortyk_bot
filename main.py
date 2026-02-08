@@ -84,6 +84,11 @@ def guesser(update, context):
     text = update.message.text.lower()
     user_data = update['message'].from_user
 
+    # ===== РЕАКЦІЯ НА "ГЕТЕРО" =====
+    if "гетеро" in text:
+        update.message.reply_text("🍽️")
+        return GUESSING
+  
     if user_data['id'] != context.chat_data.get("current_player") and text == context.chat_data.get("current_word"):
         rating = context.chat_data.get('rating', {})
 
@@ -198,11 +203,6 @@ def main():
     dp.add_handler(CommandHandler('rating', show_rating))
     dp.add_handler(CommandHandler('clear_rating', clear_rating))
     dp.add_handler(conv_handler)
-
-    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, plate_on_malvy))
-  
-    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, plate_on_hetero))
-  
 
     updater.start_polling()
     updater.idle()
