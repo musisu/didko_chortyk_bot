@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 
 import os
+import json
 from random import shuffle, choice
 from datetime import datetime
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
@@ -21,6 +22,51 @@ WORDS = []
 with open("words.txt", "r", encoding="utf-8") as f:
     WORDS = [w.strip().lower() for w in f.readlines()]
 shuffle(WORDS)
+
+# ---------- DAILY STATS ----------
+STATS_FILE = "daily_stats.json"
+
+def load_stats():
+    if not os.path.exists(STATS_FILE):
+        return {"date": datetime.now().strftime("%Y-%m-%d"), "messages": {}}
+    with open(STATS_FILE, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+def save_stats(data):
+    with open(STATS_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+def check_new_day(data):
+    today = datetime.now().strftime("%Y-%m-%d")
+    if data.get("date") != today:
+        # Новий день → скидаємо лічильники
+        data = {"date": today, "messages": {}}
+    return data
+
+def count_message(update):
+    user = update.effective_user
+    data = load_stats()
+    data = check_new_day(data)
+    uid = str(user.id)
+    if uid not in data["messages"]:
+        data["messages"][uid] = {"name": user.first_name, "count": 0}
+    data["messages"][uid]["count"] += 1
+    save_stats(data)
+
+def show_top(update, context):
+    data = load_stats()
+    users = sorted(
+        data["messages"].values(),
+        key=lambda x: x["count"],
+        reverse=True
+    )
+    if not users:
+        update.message.reply_text("Сьогодні ще ніхто нічого не писав 🙂")
+        return
+    text = "🏆 Топ активності за сьогодні:\n\n"
+    for i, u in enumerate(users[:10], 1):
+        text += f"{i}. {u['name']} — {u['count']} повідомлень\n"
+    update.message.reply_text(text)
 
 # ---------- GAME ----------
 def start(update, context):
@@ -56,19 +102,16 @@ def guesser(update, context):
     text = update.message.text.lower()
     user = update.message.from_user
 
-    # 🔥 РЕАКЦІЯ НА "ГЕТЕРО" та "МАЛЬВИ"
+    # 🔥 РЕАКЦІЯ НА "ГЕТЕРО", "МАЛЬВИ", "КІШПАРИ"
     if "гетеро" in text:
         update.message.reply_text("🍽️")
         return GUESSING
-
     if "мальви" in text:
-        update.message.reply_text("🍽️")
+        update.message.reply_text("👀")
         return GUESSING
-        
     if "кішпари" in text:
         update.message.reply_text("🍽️")
         return GUESSING
-
 
     # Основна логіка гри
     if (
@@ -87,7 +130,6 @@ def guesser(update, context):
 def next_player(update, context):
     query = update.callback_query
     query.answer()
-
     user = query.from_user
     context.chat_data["current_player"] = user.id
     context.chat_data["current_word"] = choice(WORDS)
@@ -127,14 +169,17 @@ def next_word(update, context):
 # ---------- GLOBAL TEXT HANDLER ----------
 def global_text(update, context):
     text = update.message.text.lower()
+
+    # 🔥 Підрахунок повідомлень
+    count_message(update)
+
+    # 🔥 Ключові слова
     if "гетеро" in text:
         update.message.reply_text("🍽️")
     if "мальви" in text:
-        update.message.reply_text("🍽️")
+        update.message.reply_text("👀")
     if "кішпари" in text:
         update.message.reply_text("🍽️")
-        return GUESSING
-
 
 
 # ---------- MAIN ----------
@@ -143,7 +188,7 @@ def main():
     updater = Updater(token, use_context=True)
     dp = updater.dispatcher
 
-    # 🔥 Обробка "гетеро" та "мальви" завжди
+    # Обробник тексту (топ + ключові слова)
     dp.add_handler(MessageHandler(Filters.text & ~Filters.command, global_text))
 
     # Conversation handler для гри
@@ -164,6 +209,7 @@ def main():
     )
 
     dp.add_handler(conv)
+    dp.add_handler(CommandHandler("top", show_top))
 
     updater.start_polling()
     updater.idle()
