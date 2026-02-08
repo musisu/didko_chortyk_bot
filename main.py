@@ -57,15 +57,17 @@ def guesser(update, context):
     user = update.message.from_user
     username = user.username or user.first_name
 
-    # 🔥 Реакція на "гетеро"
+    # 👹 РЕАКЦІЯ НА "ГЕТЕРО" — ПРАЦЮЄ ЗАВЖДИ
     if "гетеро" in text:
         update.message.reply_text("👹")
-        # Віднімаємо 1 монету
-        coins = context.bot_data.setdefault('coins', {})
+        coins = context.bot_data.setdefault("coins", {})
         coins[username] = max(coins.get(username, 0) - 1, 0)
-        context.bot_data['coins'] = coins
 
-    # Основна логіка гри
+    # 📝 РАХУЄМО ПОВІДОМЛЕННЯ — ЗАВЖДИ
+    chat_stats = context.chat_data.setdefault("chat_messages", {})
+    chat_stats[username] = chat_stats.get(username, 0) + 1
+
+    # 🎮 ЛОГІКА ГРИ
     if (
         context.chat_data.get("is_playing")
         and user.id != context.chat_data.get("current_player")
@@ -73,25 +75,16 @@ def guesser(update, context):
     ):
         update.message.reply_text(f"{user.first_name} вгадав слово!")
 
-        # Нарахування монет
-        coins = context.bot_data.setdefault('coins', {})
-        rating = context.chat_data.setdefault('rating', {})
+        coins = context.bot_data.setdefault("coins", {})
+        rating = context.chat_data.setdefault("rating", {})
         rating[username] = rating.get(username, 0) + 1
-        context.chat_data['rating'] = rating
 
-        # Позиція для нагороди
         position = sorted(rating.values(), reverse=True).index(rating[username]) + 1
         coins[username] = coins.get(username, 0) + TOP_REWARD.get(position, 0)
-        context.bot_data['coins'] = coins
 
         context.chat_data["winner"] = user.id
         context.chat_data["win_time"] = datetime.now()
         return CHOOSING_PLAYER
-
-    # Рахуємо повідомлення для топу по чату
-    chat_stats = context.chat_data.setdefault('chat_messages', {})
-    chat_stats[username] = chat_stats.get(username, 0) + 1
-    context.chat_data['chat_messages'] = chat_stats
 
     return GUESSING
 
@@ -229,9 +222,6 @@ def main():
     # Топи
     dp.add_handler(CommandHandler("top_money", top_money))
     dp.add_handler(CommandHandler("top", top_messages))
-
-    # Реакції
-    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, guesser))
 
     updater.start_polling()
     updater.idle()
