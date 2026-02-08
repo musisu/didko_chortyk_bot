@@ -1,6 +1,6 @@
 This is the ukrainian version of Crocodile Game Bot. 
 
-You can test it here: https://t.me/crocodile_ukraine_bot
+You can test it here: https://t.me/Didko_chortyk_bot
 
 To set this up yourself, you need to create a `keys.py` module with your
 `TOKEN` set up as an environment variable, see
