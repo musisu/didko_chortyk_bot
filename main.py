@@ -61,21 +61,21 @@ def global_text_handler(update, context):
     chat_stats = context.chat_data.setdefault("chat_messages", {})
     chat_stats[username] = chat_stats.get(username, 0) + 1
 
+    coins = load_coins()
+
     # 👹 Реакція на "гетеро"
     if "гетеро" in text:
-        coins = load_coins()
         coins[username] = max(coins.get(username, 0) - 1, 0)
         save_coins(coins)
 
         update.message.reply_text("👹")
-        update.message.reply_text(f"@{username}, віднято 1 монету за «гетеро»!")
+        update.message.reply_text(f"@{username}, віднято 1 монету за «гетеро»! Тепер у вас {coins[username]} монет.")
 
     # #️⃣ Хештег +50 монет
     if "#" in text and update.message.chat.id == SPECIAL_HASHTAG_CHAT:
-        coins = load_coins()
         coins[username] = coins.get(username, 0) + 50
         save_coins(coins)
-        update.message.reply_text(f"🎉 @{username}, отримано 50 монет за хештег!")
+        update.message.reply_text(f"🎉 @{username}, отримано 50 монет за хештег! Тепер у вас {coins[username]} монет.")
 
 # ---------- GAME ----------
 def start(update, context):
@@ -124,6 +124,8 @@ def guesser(update, context):
         position = sorted(rating.values(), reverse=True).index(rating[username]) + 1
         coins[username] = coins.get(username, 0) + TOP_REWARD.get(position, 0)
         save_coins(coins)
+
+        update.message.reply_text(f"🎉 @{username}, отримано {TOP_REWARD.get(position,0)} монет за вгадане слово! Тепер у вас {coins[username]} монет.")
 
         context.chat_data["winner"] = user.id
         context.chat_data["win_time"] = datetime.now()
@@ -202,7 +204,7 @@ def add_coins(update, context):
     coins[username] = coins.get(username, 0) + amount
     save_coins(coins)
 
-    update.message.reply_text(f"✅ @{username} +{amount} монет")
+    update.message.reply_text(f"✅ @{username} +{amount} монет. Тепер у нього {coins[username]} монет.")
 
 def deduct_coins(update, context):
     if not is_admin(update, context):
@@ -230,7 +232,7 @@ def deduct_coins(update, context):
     coins[username] = max(coins.get(username, 0) - amount, 0)
     save_coins(coins)
 
-    update.message.reply_text(f"✅ @{username} -{amount} монет")
+    update.message.reply_text(f"✅ @{username} -{amount} монет. Тепер у нього {coins[username]} монет.")
 
 # ---------- TOPS ----------
 def top_money(update, context):
