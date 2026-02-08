@@ -56,19 +56,10 @@ def stop(update, context):
     update.message.reply_text("Гру зупинено")
     return ConversationHandler.END
 
-
-def guesser(update, context):
+def plate_on_hetero(update, context):
     text = update.message.text.lower()
-    user = update.message.from_user
-    username = user.username or user.first_name
-
-    # 🔥 Реакція на "гетеро" та "мальви"
     if "гетеро" in text:
         update.message.reply_text("🍽️")
-        return GUESSING
-    if "мальви" in text:
-        update.message.reply_text("👀")
-        return GUESSING
 
     # Основна логіка гри
     if (
@@ -229,6 +220,9 @@ def main():
 
     # Топ
     dp.add_handler(CommandHandler("top", top))
+
+    # Відповіді
+    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, plate_on_hetero))
 
     updater.start_polling()
     updater.idle()
