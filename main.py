@@ -58,10 +58,14 @@ def guesser(update, context):
     username = user.username or user.first_name
 
     # 🔥 Реакція на "гетеро" / "мальви"
-    if "гетеро" in text:
-        update.message.reply_text("🍽️")
-    if "мальви" in text:
-        update.message.reply_text("👀")
+if "гетеро" in text:
+    update.message.reply_text("👹")
+    
+    # Зменшуємо монетки користувача на 1
+    username = user.username or user.first_name
+    coins = context.bot_data.setdefault('coins', {})
+    coins[username] = max(coins.get(username, 0) - 1, 0)
+    context.bot_data['coins'] = coins
 
     # Основна логіка гри
     if (
