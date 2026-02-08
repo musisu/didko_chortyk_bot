@@ -27,7 +27,7 @@ shuffle(WORDS)
 # ---------- GLOBAL DATA ----------
 wallets = {}          # {user_id: coins}
 daily_messages = {}   # {chat_id: {user_id: count}}
-SPECIAL_CHAT_ID = -1001234567890  # встав свій id чату
+SPECIAL_CHAT_ID = 5214033440  # встав свій id чату
 SPECIAL_HASH_COINS = 50
 
 # ---------- UTILS ----------
