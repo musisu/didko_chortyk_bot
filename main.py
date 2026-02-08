@@ -1,4 +1,4 @@
-##!/usr/bin/env python
+#!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
 import os
@@ -56,11 +56,16 @@ def guesser(update, context):
     text = update.message.text.lower()
     user = update.message.from_user
 
-    # 🔥 РЕАКЦІЯ НА "ГЕТЕРО"
+    # 🔥 РЕАКЦІЯ НА "ГЕТЕРО" та "МАЛЬВИ"
     if "гетеро" in text:
         update.message.reply_text("🍽️")
         return GUESSING
 
+    if "мальви" in text:
+        update.message.reply_text("👀")
+        return GUESSING
+
+    # Основна логіка гри
     if (
         context.chat_data.get("is_playing")
         and user.id != context.chat_data.get("current_player")
@@ -114,10 +119,13 @@ def next_word(update, context):
     return GUESSING
 
 
-# ---------- GLOBAL TEXT HANDLER (ПРАЦЮЄ ЗАВЖДИ) ----------
+# ---------- GLOBAL TEXT HANDLER ----------
 def global_text(update, context):
-    if "гетеро" in update.message.text.lower():
+    text = update.message.text.lower()
+    if "гетеро" in text:
         update.message.reply_text("🍽️")
+    if "мальви" in text:
+        update.message.reply_text("👀")
 
 
 # ---------- MAIN ----------
@@ -126,9 +134,10 @@ def main():
     updater = Updater(token, use_context=True)
     dp = updater.dispatcher
 
-    # 🔥 ЦЕ ОБОВʼЯЗКОВО — працює поза грою
+    # 🔥 Обробка "гетеро" та "мальви" завжди
     dp.add_handler(MessageHandler(Filters.text & ~Filters.command, global_text))
 
+    # Conversation handler для гри
     conv = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
         states={
