@@ -15,14 +15,30 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 GUESSING, CHOOSING_PLAYER = range(2)
-SPECIAL_HASHTAG_CHAT = -5214033440  # Твій чат для #
+SPECIAL_HASHTAG_CHAT = -5214033440
 TOP_REWARD = {1: 20, 2: 10, 3: 5}
 
 # ---------- WORDS ----------
-WORDS = []
 with open("words.txt", "r", encoding="utf-8") as f:
     WORDS = [w.strip().lower() for w in f.readlines()]
 shuffle(WORDS)
+
+# ---------- GLOBAL REACTIONS ----------
+def hetero_reaction(update, context):
+    if not update.message or not update.message.text:
+        return
+
+    text = update.message.text.lower()
+    if "гетеро" not in text:
+        return
+
+    user = update.message.from_user
+    username = user.username or user.first_name
+
+    update.message.reply_text("👹")
+
+    coins = context.bot_data.setdefault("coins", {})
+    coins[username] = max(coins.get(username, 0) - 1, 0)
 
 # ---------- GAME ----------
 def start(update, context):
@@ -57,17 +73,11 @@ def guesser(update, context):
     user = update.message.from_user
     username = user.username or user.first_name
 
-    # 👹 РЕАКЦІЯ НА "ГЕТЕРО" — ПРАЦЮЄ ЗАВЖДИ
-    if "гетеро" in text:
-        update.message.reply_text("👹")
-        coins = context.bot_data.setdefault("coins", {})
-        coins[username] = max(coins.get(username, 0) - 1, 0)
-
-    # 📝 РАХУЄМО ПОВІДОМЛЕННЯ — ЗАВЖДИ
+    # 📝 Рахуємо повідомлення ЗАВЖДИ
     chat_stats = context.chat_data.setdefault("chat_messages", {})
     chat_stats[username] = chat_stats.get(username, 0) + 1
 
-    # 🎮 ЛОГІКА ГРИ
+    # 🎮 Логіка гри
     if (
         context.chat_data.get("is_playing")
         and user.id != context.chat_data.get("current_player")
@@ -92,6 +102,7 @@ def next_player(update, context):
     query = update.callback_query
     query.answer()
     user = query.from_user
+
     context.chat_data["current_player"] = user.id
     context.chat_data["current_word"] = choice(WORDS)
 
@@ -124,70 +135,68 @@ def next_word(update, context):
         query.answer("Не можна", show_alert=True)
     return GUESSING
 
-# ---------- COINS HANDLERS ----------
+# ---------- COINS ----------
 def wallet(update, context):
     user = update.message.from_user
     username = user.username or user.first_name
-    coins = context.bot_data.get('coins', {}).get(username, 0)
+    coins = context.bot_data.get("coins", {}).get(username, 0)
     update.message.reply_text(f"@{username}, у вас {coins} монет")
 
 def add_coins(update, context):
-    try:
-        args = context.args
-        if len(args) != 2:
-            update.message.reply_text("Використання: /add username amount")
-            return
-        username = args[0].lstrip("@")
-        amount = int(args[1])
-        coins = context.bot_data.setdefault('coins', {})
-        coins[username] = coins.get(username, 0) + amount
-        update.message.reply_text(f"Додано {amount} монет @{username}")
-    except Exception as e:
-        update.message.reply_text(f"Помилка: {e}")
+    args = context.args
+    if len(args) != 2:
+        update.message.reply_text("Використання: /add username amount")
+        return
+
+    username = args[0].lstrip("@")
+    amount = int(args[1])
+    coins = context.bot_data.setdefault("coins", {})
+    coins[username] = coins.get(username, 0) + amount
+    update.message.reply_text(f"Додано {amount} монет @{username}")
 
 def deduct_coins(update, context):
-    try:
-        args = context.args
-        if len(args) != 2:
-            update.message.reply_text("Використання: /deduct username amount")
-            return
-        username = args[0].lstrip("@")
-        amount = int(args[1])
-        coins = context.bot_data.setdefault('coins', {})
-        coins[username] = max(coins.get(username, 0) - amount, 0)
-        update.message.reply_text(f"Віднято {amount} монет у @{username}")
-    except Exception as e:
-        update.message.reply_text(f"Помилка: {e}")
+    args = context.args
+    if len(args) != 2:
+        update.message.reply_text("Використання: /deduct username amount")
+        return
 
-# ---------- HASHTAG COINS ----------
+    username = args[0].lstrip("@")
+    amount = int(args[1])
+    coins = context.bot_data.setdefault("coins", {})
+    coins[username] = max(coins.get(username, 0) - amount, 0)
+    update.message.reply_text(f"Віднято {amount} монет у @{username}")
+
+# ---------- HASHTAG ----------
 def hashtag_coins(update, context):
     if update.message.chat.id != SPECIAL_HASHTAG_CHAT:
         return
-    text = update.message.text
-    if "#" in text:
-        username = update.message.from_user.username or update.message.from_user.first_name
-        coins = context.bot_data.setdefault('coins', {})
-        coins[username] = coins.get(username, 0) + 50
-        context.bot_data['coins'] = coins
+    if "#" not in update.message.text:
+        return
+
+    username = update.message.from_user.username or update.message.from_user.first_name
+    coins = context.bot_data.setdefault("coins", {})
+    coins[username] = coins.get(username, 0) + 50
 
 # ---------- TOPS ----------
 def top_money(update, context):
-    coins = context.bot_data.get('coins', {})
+    coins = context.bot_data.get("coins", {})
     if not coins:
         update.message.reply_text("Поки що ніхто не має монет.")
         return
-    top_list = sorted(coins.items(), key=lambda x: x[1], reverse=True)[:5]
-    msg = "\n".join([f"{i+1}. @{user}: {amount} монет" for i, (user, amount) in enumerate(top_list)])
-    update.message.reply_text(f"💰 Топ користувачів за монетами:\n{msg}")
+
+    top = sorted(coins.items(), key=lambda x: x[1], reverse=True)[:5]
+    msg = "\n".join(f"{i+1}. @{u}: {c}" for i, (u, c) in enumerate(top))
+    update.message.reply_text(f"💰 Топ за монетами:\n{msg}")
 
 def top_messages(update, context):
-    chat_stats = context.chat_data.get('chat_messages', {})
-    if not chat_stats:
-        update.message.reply_text("Поки що немає статистики повідомлень.")
+    stats = context.chat_data.get("chat_messages", {})
+    if not stats:
+        update.message.reply_text("Немає статистики.")
         return
-    top_list = sorted(chat_stats.items(), key=lambda x: x[1], reverse=True)[:5]
-    msg = "\n".join([f"{i+1}. {user}: {count} повідомлень" for i, (user, count) in enumerate(top_list)])
-    update.message.reply_text(f"📝 Топ користувачів за повідомленнями у цьому чаті:\n{msg}")
+
+    top = sorted(stats.items(), key=lambda x: x[1], reverse=True)[:5]
+    msg = "\n".join(f"{i+1}. {u}: {c}" for i, (u, c) in enumerate(top))
+    update.message.reply_text(f"📝 Топ повідомлень:\n{msg}")
 
 # ---------- MAIN ----------
 def main():
@@ -195,7 +204,13 @@ def main():
     updater = Updater(token, use_context=True)
     dp = updater.dispatcher
 
-    # Гра
+    # 👹 Реакція на "гетеро" — ПЕРША
+    dp.add_handler(
+        MessageHandler(Filters.text & ~Filters.command, hetero_reaction),
+        group=0
+    )
+
+    # 🎮 Гра
     conv = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
         states={
@@ -211,15 +226,15 @@ def main():
         fallbacks=[CommandHandler("stop", stop)],
         per_user=False
     )
-    dp.add_handler(conv)
+    dp.add_handler(conv, group=1)
 
-    # Монети
+    # 💰 Монети
     dp.add_handler(CommandHandler("wallet", wallet))
     dp.add_handler(CommandHandler("add", add_coins))
     dp.add_handler(CommandHandler("deduct", deduct_coins))
     dp.add_handler(MessageHandler(Filters.text & ~Filters.command, hashtag_coins))
 
-    # Топи
+    # 🏆 Топи
     dp.add_handler(CommandHandler("top_money", top_money))
     dp.add_handler(CommandHandler("top", top_messages))
 
