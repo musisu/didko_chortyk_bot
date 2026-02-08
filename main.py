@@ -127,7 +127,7 @@ def next_word(update, context):
 # ---------- GLOBAL TEXT HANDLER ----------
 def global_text(update, context):
     user = update.message.from_user
-    chat_id = update.message.chat_id
+    chat_id = update.message.chat.id  # Виправлено!
     text = update.message.text.lower()
 
     # 🔥 Реакція на ключові слова
@@ -148,7 +148,7 @@ def global_text(update, context):
 
 # ---------- TOP / WALLET ----------
 def top(update, context):
-    chat_id = update.message.chat_id
+    chat_id = update.message.chat.id  # Виправлено!
     if chat_id not in daily_messages or not daily_messages[chat_id]:
         update.message.reply_text("Ще немає повідомлень для топу сьогодні.")
         return
@@ -156,8 +156,13 @@ def top(update, context):
     sorted_users = sorted(daily_messages[chat_id].items(), key=lambda x: x[1], reverse=True)
     text = "Поточний топ за день:\n"
     for i, (user_id, count) in enumerate(sorted_users[:3]):
-        text += f"{i+1}. [Користувач](tg://user?id={user_id}): {count} повідомлень\n"
-    update.message.reply_text(text, parse_mode="Markdown")
+        try:
+            user = context.bot.get_chat_member(chat_id, user_id).user
+            username = user.first_name if user.first_name else "Unknown"
+        except:
+            username = "Unknown"
+        text += f"{i+1}. {username}: {count} повідомлень\n"
+    update.message.reply_text(text)
 
 def wallet(update, context):
     user_id = update.message.from_user.id
