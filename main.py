@@ -3,7 +3,7 @@
 
 import os
 from random import shuffle, choice
-from datetime import datetime, date
+from datetime import datetime
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Updater, CommandHandler, MessageHandler, Filters,
@@ -17,6 +17,8 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 GUESSING, CHOOSING_PLAYER = range(2)
+MONETES = {}  # Єдиний рахунок між чатами
+daily_messages = {}  # Повідомлення за день у кожному чаті
 
 # ---------- WORDS ----------
 WORDS = []
@@ -24,21 +26,7 @@ with open("words.txt", "r", encoding="utf-8") as f:
     WORDS = [w.strip().lower() for w in f.readlines()]
 shuffle(WORDS)
 
-# ---------- GLOBAL DATA ----------
-wallets = {}          # {user_id: coins}
-daily_messages = {}   # {chat_id: {user_id: count}}
-SPECIAL_CHAT_ID = 5214033440  # твої повідомлення з # дають 50 монет
-SPECIAL_HASH_COINS = 50
-
-# ---------- UTILS ----------
-def add_coins(user_id, amount):
-    wallets[user_id] = wallets.get(user_id, 0) + amount
-
-def sub_coins(user_id, amount):
-    wallets[user_id] = max(wallets.get(user_id, 0) - amount, 0)
-
-def get_wallet(user_id):
-    return wallets.get(user_id, 0)
+GROUP_ID = 5214033440  # Група, де нараховуємо 50 монет за #
 
 # ---------- GAME ----------
 def start(update, context):
@@ -72,10 +60,9 @@ def guesser(update, context):
     text = update.message.text.lower()
     user = update.message.from_user
 
-    # 🔥 Реакція на ключові слова у будь-яких чатах
+    # 🔥 Реакція на ключові слова
     if "гетеро" in text:
-        sub_coins(user.id, 1)
-        update.message.reply_text("🍽️ -1 монета за гетеро")
+        update.message.reply_text("🍽️")
         return GUESSING
     if "мальви" in text:
         update.message.reply_text("👀")
@@ -90,8 +77,10 @@ def guesser(update, context):
         and user.id != context.chat_data.get("current_player")
         and text == context.chat_data.get("current_word")
     ):
-        add_coins(user.id, 5)
-        update.message.reply_text(f"{user.first_name} вгадав слово! +5 монет")
+        update.message.reply_text(f"{user.first_name} вгадав слово!")
+        # Додаємо монети за вгадане слово
+        MONETES[user.id] = MONETES.get(user.id, 0) + 5
+
         context.chat_data["winner"] = user.id
         context.chat_data["win_time"] = datetime.now()
         return CHOOSING_PLAYER
@@ -101,6 +90,7 @@ def guesser(update, context):
 def next_player(update, context):
     query = update.callback_query
     query.answer()
+
     user = query.from_user
     context.chat_data["current_player"] = user.id
     context.chat_data["current_word"] = choice(WORDS)
@@ -109,6 +99,7 @@ def next_player(update, context):
         InlineKeyboardButton("Подивитись слово", callback_data="look"),
         InlineKeyboardButton("Наступне слово", callback_data="next")
     ]]
+
     query.edit_message_text(
         f"[{user.first_name}](tg://user?id={user.id}) пояснює слово!",
         reply_markup=InlineKeyboardMarkup(keyboard),
@@ -133,47 +124,56 @@ def next_word(update, context):
         query.answer("Не можна", show_alert=True)
     return GUESSING
 
-# ---------- WALLET ----------
-def wallet(update, context):
+# ---------- GLOBAL TEXT HANDLER ----------
+def global_text(update, context):
     user = update.message.from_user
-    coins = get_wallet(user.id)
-    update.message.reply_text(f"💰 У тебе {coins} монет")
+    chat_id = update.message.chat_id
+    text = update.message.text.lower()
 
-# ---------- DAILY MESSAGES ----------
-def track_daily_messages(update, context):
-    chat_id = update.effective_chat.id
+    # 🔥 Реакція на ключові слова
+    if "гетеро" in text:
+        update.message.reply_text("🍽️")
+    if "мальви" in text:
+        update.message.reply_text("👀")
+    if "кішпари" in text:
+        update.message.reply_text("🍽️")
+
+    # 🔥 Тільки для конкретного чату: # нарахування 50 монет
+    if chat_id == GROUP_ID and "#" in text:
+        MONETES[user.id] = MONETES.get(user.id, 0) + 50
+
+    # Рахуємо повідомлення для щоденного топу
+    daily_messages.setdefault(chat_id, {})
+    daily_messages[chat_id][user.id] = daily_messages[chat_id].get(user.id, 0) + 1
+
+# ---------- TOP / WALLET ----------
+def top(update, context):
+    chat_id = update.message.chat_id
+    if chat_id not in daily_messages or not daily_messages[chat_id]:
+        update.message.reply_text("Ще немає повідомлень для топу сьогодні.")
+        return
+
+    sorted_users = sorted(daily_messages[chat_id].items(), key=lambda x: x[1], reverse=True)
+    text = "Поточний топ за день:\n"
+    for i, (user_id, count) in enumerate(sorted_users[:3]):
+        text += f"{i+1}. [Користувач](tg://user?id={user_id}): {count} повідомлень\n"
+    update.message.reply_text(text, parse_mode="Markdown")
+
+def wallet(update, context):
     user_id = update.message.from_user.id
-    today = date.today()
+    balance = MONETES.get(user_id, 0)
+    update.message.reply_text(f"Твій баланс: {balance} монет")
 
-    if chat_id not in daily_messages:
+# ---------- DAILY RESET ----------
+def daily_reset():
+    global daily_messages
+    for chat_id, messages in daily_messages.items():
+        sorted_users = sorted(messages.items(), key=lambda x: x[1], reverse=True)
+        rewards = [20, 10, 5]  # 1,2,3 місце
+        for i, (user_id, _) in enumerate(sorted_users[:3]):
+            MONETES[user_id] = MONETES.get(user_id, 0) + rewards[i]
+        # очищаємо лічильники після нарахування
         daily_messages[chat_id] = {}
-    if user_id not in daily_messages[chat_id]:
-        daily_messages[chat_id][user_id] = 0
-
-    daily_messages[chat_id][user_id] += 1
-
-# ---------- SPECIAL CHAT TAGS ----------
-def check_special_chat_message(update, context):
-    chat_id = update.effective_chat.id
-    user_id = update.message.from_user.id
-    text = update.message.text
-    if chat_id == SPECIAL_CHAT_ID and "#" in text:
-        add_coins(user_id, SPECIAL_HASH_COINS)
-        update.message.reply_text(f"🎉 +{SPECIAL_HASH_COINS} монет за повідомлення з #!")
-
-# ---------- DAILY TOP ----------
-def send_daily_top(context):
-    bot = context.bot
-    for chat_id, users in daily_messages.items():
-        sorted_users = sorted(users.items(), key=lambda x: x[1], reverse=True)
-        top_text = "🏆 Топ за сьогодні:\n"
-        for i, (user_id, count) in enumerate(sorted_users[:3]):
-            coins_reward = [20, 10, 5][i]
-            add_coins(user_id, coins_reward)
-            top_text += f"{i+1}. [User](tg://user?id={user_id}): {count} повідомлень (+{coins_reward} монет)\n"
-        bot.send_message(chat_id=chat_id, text=top_text, parse_mode="Markdown")
-
-    daily_messages.clear()
 
 # ---------- MAIN ----------
 def main():
@@ -181,11 +181,10 @@ def main():
     updater = Updater(token, use_context=True)
     dp = updater.dispatcher
 
-    # Основні хендлери
-    dp.add_handler(CommandHandler("wallet", wallet))
-    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, track_daily_messages))
-    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, check_special_chat_message))
+    # Обробка тексту
+    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, global_text))
 
+    # Conversation handler для гри
     conv = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
         states={
@@ -203,9 +202,13 @@ def main():
     )
     dp.add_handler(conv)
 
-    # Scheduler для щоденного топу о 00:00 Київ
+    # Команди топ та гаманець
+    dp.add_handler(CommandHandler("top", top))
+    dp.add_handler(CommandHandler("wallet", wallet))
+
+    # Налаштування APScheduler для щоденного reset о 00:00 Київ
     scheduler = BackgroundScheduler(timezone=pytz.timezone("Europe/Kiev"))
-    scheduler.add_job(lambda: send_daily_top(updater), "cron", hour=0, minute=0)
+    scheduler.add_job(daily_reset, trigger="cron", hour=0, minute=0)
     scheduler.start()
 
     updater.start_polling()
