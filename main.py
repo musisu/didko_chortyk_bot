@@ -28,19 +28,31 @@ STEAL_MAX_CHANCE = 0.9
 
 STEAL_CHANCE = {}
 # ================== COINS STORAGE ==================
-COINS = {}
+DATA_FILE = "coins.json"  # залишаємо старий файл
+COINS = {}                 # залишаємо баланс гравців
+MARRIAGES = {}             # нове для шлюбів
+INVENTORY = {}             # нове для каблучок та іншого
 
-def load_coins():
-    global COINS
+def load_data():
+    global COINS, MARRIAGES, INVENTORY
     try:
-        with open(COINS_FILE, "r", encoding="utf-8") as f:
-            COINS = json.load(f)
+        with open(DATA_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            COINS = data.get("coins", {})
+            MARRIAGES = data.get("marriages", {})
+            INVENTORY = data.get("inventory", {})
     except (FileNotFoundError, json.JSONDecodeError):
         COINS = {}
+        MARRIAGES = {}
+        INVENTORY = {}
 
-def save_coins():
-    with open(COINS_FILE, "w", encoding="utf-8") as f:
-        json.dump(COINS, f, ensure_ascii=False, indent=2)
+def save_data():
+    with open(DATA_FILE, "w", encoding="utf-8") as f:
+        json.dump({
+            "coins": COINS,
+            "marriages": MARRIAGES,
+            "inventory": INVENTORY
+        }, f, ensure_ascii=False, indent=2)
 
 # ================== ADMIN CHECK ==================
 def is_admin(update, context):
@@ -74,14 +86,14 @@ def global_text_handler(update, context):
     # 👹 "гетеро"
     if "гетеро" in text:
         COINS[username] = max(COINS.get(username, 0) - 1, 0)
-        save_coins()
+        save_data()
         update.message.reply_text("👹")
         update.message.reply_text(f"@{username}, -1 монета")
 
     # #️⃣ hashtag reward
     if "#" in text and update.message.chat.id == SPECIAL_HASHTAG_CHAT:
         COINS[username] = COINS.get(username, 0) + 50
-        save_coins()
+        save_data()
         update.message.reply_text(f"🎉 @{username}, +50 монет")
 
 # ================== GAME ==================
@@ -129,7 +141,7 @@ def guesser(update, context):
 
         pos = sorted(rating.values(), reverse=True).index(rating[username]) + 1
         COINS[username] = COINS.get(username, 0) + TOP_REWARD.get(pos, 0)
-        save_coins()
+        save_data()
 
         return CHOOSING_PLAYER
 
@@ -189,7 +201,7 @@ def add_coins(update, context):
     username = user.username or user.first_name
 
     COINS[username] = COINS.get(username, 0) + amount
-    save_coins()
+    save_data()
     update.message.reply_text(f"✅ @{username} +{amount}")
 
 def deduct_coins(update, context):
@@ -229,7 +241,7 @@ def gift_coins(update, context):
 
     COINS[from_name] -= amount
     COINS[to_name] = COINS.get(to_name, 0) + amount
-    save_coins()
+    save_data()
 
     update.message.reply_text(
         f"🎁 @{from_name} подарував @{to_name} {amount} монет"
@@ -260,7 +272,7 @@ def steal_coins(update, context):
 
         # 🔥 скид шансів
         STEAL_CHANCE[thief_name] = STEAL_BASE_CHANCE
-        save_coins()
+        save_data()
 
         return update.message.reply_text(
             f"🚓 @{thief_name} попався!\n"
@@ -280,7 +292,7 @@ def steal_coins(update, context):
     new_chance = min(chance + STEAL_STEP, STEAL_MAX_CHANCE)
     STEAL_CHANCE[thief_name] = new_chance
 
-    save_coins()
+    save_data()
 
     update.message.reply_text(
         f"🕵️ @{thief_name} поцупив {real_amount} монет у @{victim_name}!\n"
@@ -306,7 +318,7 @@ def top_messages(update, context):
 
 # ================== MAIN ==================
 def main():
-    load_coins()  # 🔥 КРИТИЧНО
+    load_data()  # 🔥 КРИТИЧНО
 
     updater = Updater(os.environ["TOKEN"], use_context=True)
     dp = updater.dispatcher
