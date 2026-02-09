@@ -12,44 +12,48 @@ from telegram.ext import (
 )
 import logging
 
-# ---------- JSON для монет ----------
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-COINS_FILE = os.path.join(BASE_DIR, "coins.json")
-
-def load_coins():
-    try:
-        with open(COINS_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        return {}
-
-def save_coins(coins):
-    with open(COINS_FILE, "w", encoding="utf-8") as f:
-        json.dump(coins, f, ensure_ascii=False, indent=2)
-
+# ================== LOGGING ==================
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# ================== CONSTANTS ==================
 GUESSING, CHOOSING_PLAYER = range(2)
 SPECIAL_HASHTAG_CHAT = -5214033440
 TOP_REWARD = {1: 20, 2: 10, 3: 5}
+COINS_FILE = "coins.json"
 
-# ---------- CHECK ADMIN ----------
+# ================== COINS STORAGE ==================
+COINS = {}
+
+def load_coins():
+    global COINS
+    try:
+        with open(COINS_FILE, "r", encoding="utf-8") as f:
+            COINS = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        COINS = {}
+
+def save_coins():
+    with open(COINS_FILE, "w", encoding="utf-8") as f:
+        json.dump(COINS, f, ensure_ascii=False, indent=2)
+
+# ================== ADMIN CHECK ==================
 def is_admin(update, context):
     try:
-        chat_id = update.effective_chat.id
-        user_id = update.effective_user.id
-        member = context.bot.get_chat_member(chat_id, user_id)
+        member = context.bot.get_chat_member(
+            update.effective_chat.id,
+            update.effective_user.id
+        )
         return member.status in ("administrator", "creator")
     except Exception:
         return False
 
-# ---------- WORDS ----------
+# ================== WORDS ==================
 with open("words.txt", "r", encoding="utf-8") as f:
     WORDS = [w.strip().lower() for w in f.readlines()]
 shuffle(WORDS)
 
-# ---------- GLOBAL MESSAGE HANDLER ----------
+# ================== GLOBAL TEXT HANDLER ==================
 def global_text_handler(update, context):
     if not update.message or not update.message.text:
         return
@@ -58,27 +62,24 @@ def global_text_handler(update, context):
     user = update.message.from_user
     username = user.username or user.first_name
 
-    # 📝 Рахуємо повідомлення
-    chat_stats = context.chat_data.setdefault("chat_messages", {})
-    chat_stats[username] = chat_stats.get(username, 0) + 1
+    # 📝 message counter
+    stats = context.chat_data.setdefault("chat_messages", {})
+    stats[username] = stats.get(username, 0) + 1
 
     # 👹 "гетеро"
     if "гетеро" in text:
-        coins = load_coins()
-        coins[username] = max(coins.get(username, 0) - 1, 0)
-        save_coins(coins)
-
+        COINS[username] = max(COINS.get(username, 0) - 1, 0)
+        save_coins()
         update.message.reply_text("👹")
-        update.message.reply_text(f"@{username}, віднято 1 монету за «гетеро»!")
+        update.message.reply_text(f"@{username}, -1 монета")
 
-    # #️⃣ Хештег +50 монет
+    # #️⃣ hashtag reward
     if "#" in text and update.message.chat.id == SPECIAL_HASHTAG_CHAT:
-        coins = load_coins()
-        coins[username] = coins.get(username, 0) + 50
-        save_coins(coins)
-        update.message.reply_text(f"🎉 @{username}, отримано 50 монет за хештег!")
+        COINS[username] = COINS.get(username, 0) + 50
+        save_coins()
+        update.message.reply_text(f"🎉 @{username}, +50 монет")
 
-# ---------- GAME ----------
+# ================== GAME ==================
 def start(update, context):
     if context.chat_data.get("is_playing"):
         update.message.reply_text("Гра вже почалась")
@@ -118,16 +119,13 @@ def guesser(update, context):
     ):
         update.message.reply_text(f"{user.first_name} вгадав слово!")
 
-        coins = load_coins()
         rating = context.chat_data.setdefault("rating", {})
         rating[username] = rating.get(username, 0) + 1
 
-        position = sorted(rating.values(), reverse=True).index(rating[username]) + 1
-        coins[username] = coins.get(username, 0) + TOP_REWARD.get(position, 0)
-        save_coins(coins)
+        pos = sorted(rating.values(), reverse=True).index(rating[username]) + 1
+        COINS[username] = COINS.get(username, 0) + TOP_REWARD.get(pos, 0)
+        save_coins()
 
-        context.chat_data["winner"] = user.id
-        context.chat_data["win_time"] = datetime.now()
         return CHOOSING_PLAYER
 
     return GUESSING
@@ -135,8 +133,8 @@ def guesser(update, context):
 def next_player(update, context):
     query = update.callback_query
     query.answer()
-    user = query.from_user
 
+    user = query.from_user
     context.chat_data["current_player"] = user.id
     context.chat_data["current_word"] = choice(WORDS)
 
@@ -153,120 +151,83 @@ def next_player(update, context):
     return GUESSING
 
 def see_word(update, context):
-    query = update.callback_query
-    if query.from_user.id == context.chat_data.get("current_player"):
-        query.answer(context.chat_data.get("current_word"), show_alert=True)
+    q = update.callback_query
+    if q.from_user.id == context.chat_data.get("current_player"):
+        q.answer(context.chat_data["current_word"], show_alert=True)
     else:
-        query.answer("Не можна 👀", show_alert=True)
+        q.answer("Не можна 👀", show_alert=True)
     return GUESSING
 
 def next_word(update, context):
-    query = update.callback_query
-    if query.from_user.id == context.chat_data.get("current_player"):
+    q = update.callback_query
+    if q.from_user.id == context.chat_data.get("current_player"):
         context.chat_data["current_word"] = choice(WORDS)
-        query.answer(context.chat_data["current_word"], show_alert=True)
+        q.answer(context.chat_data["current_word"], show_alert=True)
     else:
-        query.answer("Не можна", show_alert=True)
+        q.answer("Не можна", show_alert=True)
     return GUESSING
 
-# ---------- COINS ----------
+# ================== COMMANDS ==================
 def wallet(update, context):
-    user = update.message.from_user
-    username = user.username or user.first_name
-    coins = load_coins().get(username, 0)
-    update.message.reply_text(f"@{username}, у вас {coins} монет")
+    username = update.message.from_user.username or update.message.from_user.first_name
+    update.message.reply_text(f"@{username}, у вас {COINS.get(username, 0)} монет")
 
-# ---------- ADD / DEDUCT THROUGH REPLY ----------
 def add_coins(update, context):
     if not is_admin(update, context):
-        update.message.reply_text("⛔ Тільки для адмінів")
-        return
+        return update.message.reply_text("⛔ Тільки адмін")
 
-    if not update.message.reply_to_message:
-        update.message.reply_text("❗ Використовуй команду відповіддю на повідомлення")
-        return
+    if not update.message.reply_to_message or len(context.args) != 1:
+        return update.message.reply_text("❗ /add 10 (reply)")
 
-    if len(context.args) != 1:
-        update.message.reply_text("❗ Використання: /add 10 (reply)")
-        return
+    amount = int(context.args[0])
+    user = update.message.reply_to_message.from_user
+    username = user.username or user.first_name
 
-    try:
-        amount = int(context.args[0])
-    except ValueError:
-        update.message.reply_text("❗ Кількість має бути числом")
-        return
-
-    target_user = update.message.reply_to_message.from_user
-    username = target_user.username or target_user.first_name
-
-    coins = load_coins()
-    coins[username] = coins.get(username, 0) + amount
-    save_coins(coins)
-
-    update.message.reply_text(f"✅ @{username} +{amount} монет")
+    COINS[username] = COINS.get(username, 0) + amount
+    save_coins()
+    update.message.reply_text(f"✅ @{username} +{amount}")
 
 def deduct_coins(update, context):
     if not is_admin(update, context):
-        update.message.reply_text("⛔ Тільки для адмінів")
-        return
+        return update.message.reply_text("⛔ Тільки адмін")
 
-    if not update.message.reply_to_message:
-        update.message.reply_text("❗ Використовуй команду відповіддю на повідомлення")
-        return
+    if not update.message.reply_to_message or len(context.args) != 1:
+        return update.message.reply_text("❗ /deduct 5 (reply)")
 
-    if len(context.args) != 1:
-        update.message.reply_text("❗ Використання: /deduct 5 (reply)")
-        return
+    amount = int(context.args[0])
+    user = update.message.reply_to_message.from_user
+    username = user.username or user.first_name
 
-    try:
-        amount = int(context.args[0])
-    except ValueError:
-        update.message.reply_text("❗ Кількість має бути числом")
-        return
+    COINS[username] = max(COINS.get(username, 0) - amount, 0)
+    save_coins()
+    update.message.reply_text(f"✅ @{username} -{amount}")
 
-    target_user = update.message.reply_to_message.from_user
-    username = target_user.username or target_user.first_name
-
-    coins = load_coins()
-    coins[username] = max(coins.get(username, 0) - amount, 0)
-    save_coins(coins)
-
-    update.message.reply_text(f"✅ @{username} -{amount} монет")
-
-# ---------- TOPS ----------
 def top_money(update, context):
-    coins = load_coins()
-    if not coins:
-        update.message.reply_text("Поки що ніхто не має монет.")
-        return
+    if not COINS:
+        return update.message.reply_text("Поки що немає монет")
 
-    top = sorted(coins.items(), key=lambda x: x[1], reverse=True)[:5]
+    top = sorted(COINS.items(), key=lambda x: x[1], reverse=True)[:5]
     msg = "\n".join(f"{i+1}. @{u}: {c}" for i, (u, c) in enumerate(top))
-    update.message.reply_text(f"💰 Топ за монетами:\n{msg}")
+    update.message.reply_text(f"💰 Топ монет:\n{msg}")
 
 def top_messages(update, context):
     stats = context.chat_data.get("chat_messages", {})
     if not stats:
-        update.message.reply_text("Поки що немає статистики.")
-        return
+        return update.message.reply_text("Немає статистики")
 
     top = sorted(stats.items(), key=lambda x: x[1], reverse=True)[:5]
     msg = "\n".join(f"{i+1}. {u}: {c}" for i, (u, c) in enumerate(top))
     update.message.reply_text(f"📝 Топ повідомлень:\n{msg}")
 
-# ---------- MAIN ----------
+# ================== MAIN ==================
 def main():
-    token = os.environ["TOKEN"]
-    updater = Updater(token, use_context=True)
+    load_coins()  # 🔥 КРИТИЧНО
+
+    updater = Updater(os.environ["TOKEN"], use_context=True)
     dp = updater.dispatcher
 
-    # 🌍 ГЛОБАЛЬНІ РЕЧІ — ПЕРШІ
-    dp.add_handler(
-        MessageHandler(Filters.text & ~Filters.command, global_text_handler),
-        group=0
-    )
+    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, global_text_handler), group=0)
 
-    # 🎮 ГРА
     conv = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
         states={
@@ -275,16 +236,13 @@ def main():
                 CallbackQueryHandler(see_word, pattern="^look$"),
                 CallbackQueryHandler(next_word, pattern="^next$")
             ],
-            CHOOSING_PLAYER: [
-                CallbackQueryHandler(next_player)
-            ],
+            CHOOSING_PLAYER: [CallbackQueryHandler(next_player)],
         },
         fallbacks=[CommandHandler("stop", stop)],
         per_user=False
     )
     dp.add_handler(conv, group=1)
 
-    # 📊 Команди
     dp.add_handler(CommandHandler("wallet", wallet))
     dp.add_handler(CommandHandler("top_money", top_money))
     dp.add_handler(CommandHandler("top", top_messages))
