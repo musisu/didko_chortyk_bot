@@ -31,6 +31,14 @@ STEAL_CHANCE = {}
 DATA_FILE = "coins.json"  # залишаємо старий файл
 COINS = {}                 # залишаємо баланс гравців
 MARRIAGES = {}             # нове для шлюбів
+PROPOSALS = {}
+# структура:
+# PROPOSALS = {
+#   "partner_username": {
+#       "from": "username",
+#       "ring": "gold"
+#   }
+# }
 INVENTORY = {}  
 # структура:
 # INVENTORY = {
@@ -46,24 +54,27 @@ RINGS = {        # каблучки і їх ціни
 }
 
 def load_data():
-    global COINS, MARRIAGES, INVENTORY
+    global COINS, MARRIAGES, INVENTORY, PROPOSALS
     try:
         with open(DATA_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
             COINS = data.get("coins", {})
             MARRIAGES = data.get("marriages", {})
             INVENTORY = data.get("inventory", {})
+            PROPOSALS = data.get("proposals", {})
     except (FileNotFoundError, json.JSONDecodeError):
         COINS = {}
         MARRIAGES = {}
         INVENTORY = {}
+        PROPOSALS = {}
 
 def save_data():
     with open(DATA_FILE, "w", encoding="utf-8") as f:
         json.dump({
             "coins": COINS,
             "marriages": MARRIAGES,
-            "inventory": INVENTORY
+            "inventory": INVENTORY,
+            "proposals": PROPOSALS
         }, f, ensure_ascii=False, indent=2)
 
 def is_married(username):
@@ -397,9 +408,10 @@ def buy_ring(update, context):
 
     save_data()
     update.message.reply_text(f"💍 @{username} купив каблучку {ring}")
+    
 def marry(update, context):
     if not update.message.reply_to_message:
-        return update.message.reply_text("❗ /marry у відповідь на партнера")
+        return update.message.reply_text("❗ /marry у відповідь на людину")
 
     user = update.message.from_user
     partner = update.message.reply_to_message.from_user
@@ -410,31 +422,102 @@ def marry(update, context):
     if u in MARRIAGES or p in MARRIAGES:
         return update.message.reply_text("💔 Хтось уже в шлюбі")
 
+    if p in PROPOSALS:
+        return update.message.reply_text("⌛ Цій людині вже зробили пропозицію")
+
     rings = INVENTORY.get(u, {}).get("rings", [])
     if not rings:
         return update.message.reply_text("💍 У тебе немає каблучки")
 
-    if not spend_coins(u, 500):
-        return update.message.reply_text("💸 Потрібно 500 монет")
+    ring = rings[0]
 
-    ring = rings.pop(0)  # перша каблучка
-    INVENTORY.setdefault(p, {"rings": []})
-    INVENTORY[p]["rings"].append(ring)
+    PROPOSALS[p] = {
+        "from": u,
+        "ring": ring
+    }
 
-    shared = get_balance(u) + get_balance(p)
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("✅ Прийняти", callback_data="accept_marriage"),
+            InlineKeyboardButton("❌ Відхилити", callback_data="decline_marriage")
+        ]
+    ])
 
-    COINS[u] = 0
-    COINS[p] = 0
+def accept_marriage(update, context):
+    query = update.callback_query
+    query.answer()
 
-    MARRIAGES[u] = {"partner": p, "shared": shared}
-    MARRIAGES[p] = {"partner": u, "shared": shared}
+    accepter = query.from_user
+    accepter_name = accepter.username or accepter.first_name
 
+    if accepter_name not in PROPOSALS:
+        return query.edit_message_text("❗ Пропозиція більше не дійсна")
+
+    proposal = PROPOSALS[accepter_name]
+    proposer_name = proposal["from"]
+    ring = proposal["ring"]
+
+    # списуємо 500 зі спільного / особистого балансу того, хто робив пропозицію
+    if COINS.get(proposer_name, 0) < 500:
+        PROPOSALS.pop(accepter_name, None)
+        save_data()
+        return query.edit_message_text("💸 Недостатньо монет для одруження")
+
+    COINS[proposer_name] -= 500
+
+    # передаємо каблучку тому, хто прийняв
+    INVENTORY.setdefault(accepter_name, [])
+    INVENTORY[accepter_name].append(ring)
+
+    # прибираємо каблучку у того, хто робив пропозицію
+    if proposer_name in INVENTORY and ring in INVENTORY[proposer_name]:
+        INVENTORY[proposer_name].remove(ring)
+
+    # створюємо спільний баланс
+    shared_balance = COINS.get(proposer_name, 0) + COINS.get(accepter_name, 0)
+    COINS[proposer_name] = 0
+    COINS[accepter_name] = 0
+
+    MARRIAGES[proposer_name] = {
+        "partner": accepter_name,
+        "shared": shared_balance
+    }
+    MARRIAGES[accepter_name] = {
+        "partner": proposer_name,
+        "shared": shared_balance
+    }
+
+    PROPOSALS.pop(accepter_name, None)
+    save_data()
+
+    query.edit_message_text(
+        f"💒 @{proposer_name} та @{accepter_name} одружилися!\n"
+        f"💍 Каблучка залишилась у @{accepter_name}\n"
+        f"💰 Спільний баланс: {shared_balance}"
+    )
+    
     save_data()
     update.message.reply_text(
-        f"💒 @{u} і @{p} одружились!\n"
-        f"💍 Каблучка тепер у @{p}\n"
-        f"💰 Спільний баланс: {shared}"
+        f"💌 @{u} робить пропозицію @{p}!\n"
+        f"💍 Каблучка: {ring}\n"
+        f"💰 Вартість: 500 монет",
+        reply_markup=keyboard
     )
+
+def decline_marriage(update, context):
+    query = update.callback_query
+    query.answer()
+
+    name = query.from_user.username or query.from_user.first_name
+
+    if name not in PROPOSALS:
+        return query.edit_message_text("❗ Пропозиція вже не дійсна")
+
+    proposer = PROPOSALS[name]["from"]
+    PROPOSALS.pop(name, None)
+    save_data()
+
+    query.edit_message_text(f"💔 @{name} відхилив(ла) пропозицію від @{proposer}")
 
 def divorce(update, context):
     u = update.message.from_user.username or update.message.from_user.first_name
@@ -500,6 +583,8 @@ def main():
     dp.add_handler(CommandHandler("buy_ring", buy_ring))
     dp.add_handler(CommandHandler("marry", marry))
     dp.add_handler(CommandHandler("divorce", divorce))
+    dp.add_handler(CallbackQueryHandler(accept_marriage, pattern="^accept_marriage$"))
+    dp.add_handler(CallbackQueryHandler(decline_marriage, pattern="^decline_marriage$"))
 
     updater.start_polling()
     updater.idle()
