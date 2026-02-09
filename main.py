@@ -22,7 +22,11 @@ GUESSING, CHOOSING_PLAYER = range(2)
 SPECIAL_HASHTAG_CHAT = -5214033440
 TOP_REWARD = {1: 20, 2: 10, 3: 5}
 COINS_FILE = "coins.json"
+STEAL_BASE_CHANCE = 0.4
+STEAL_STEP = 0.2
+STEAL_MAX_CHANCE = 0.9
 
+STEAL_CHANCE = {}
 # ================== COINS STORAGE ==================
 COINS = {}
 
@@ -245,7 +249,9 @@ def steal_coins(update, context):
         return update.message.reply_text("🤨 Сам у себе красти не можна")
 
     # поточний шанс
-    chance = STEAL_CHANCE.get(thief_name, STEAL_BASE_CHANCE)
+    chance = STEAL_CHANCE.get(thief_name)
+    if chance is None:
+        chance = STEAL_BASE_CHANCE
 
     # перевірка
     if random.random() < chance:
