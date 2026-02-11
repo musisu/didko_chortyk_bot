@@ -597,6 +597,7 @@ def main():
     dp.add_handler(CommandHandler("deposit_balance", deposit_balance))
     dp.add_handler(CommandHandler("deposit_add", deposit_add))
     dp.add_handler(CommandHandler("deposit_withdraw", deposit_withdraw))
+    dp.add_handler(CommandHandler("post_stats_report", post_stats_report))
     dp.add_handler(CallbackQueryHandler(marriage_callback, pattern="^marry_"))
     
 
