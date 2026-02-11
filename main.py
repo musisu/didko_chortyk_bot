@@ -121,6 +121,17 @@ def deposit_add(update, context):
     if COINS.get(username, 0) < amount:
         return update.message.reply_text("💸 Недостатньо монет для депозиту")
 
+        # шанс пограбування
+    if random.random() < BANK_ROBBERY_CHANCE:
+        robbed = False
+        for user, bal in DEPOSITS.items():
+            if bal > 0 and random.random() < BANK_ROBBERY_LOSS_CHANCE:
+                DEPOSITS[user] = 0
+                robbed = True
+        save_data()
+        if robbed:
+            return update.message.reply_text("💥 Банк пограбували! Частина депозитів обнулилася")
+
     COINS[username] -= amount
     DEPOSITS[username] = DEPOSITS.get(username, 0) + amount
     save_data()
