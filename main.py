@@ -137,14 +137,14 @@ if "#" in update.message.text:
 
     save_data()
 
-        # Іменна статистика постів
-        for period in ["daily", "weekly", "monthly", "all_time"]:
+    # Іменна статистика постів
+    for period in ["daily", "weekly", "monthly", "all_time"]:
             POST_STATS.setdefault(period, {})
             POST_STATS[period][username] = POST_STATS[period].get(username, 0) + 1
             POST_COUNTS[period] += 1
 
-        # Збереження всіх даних
-        save_data()
+    # Збереження всіх даних
+    save_data()
     
 #=================DEPOSITS===================
 
