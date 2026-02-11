@@ -21,41 +21,31 @@ logger = logging.getLogger(__name__)
 GUESSING, CHOOSING_PLAYER = range(2)
 SPECIAL_HASHTAG_CHAT = -5214033440
 TOP_REWARD = {1: 20, 2: 10, 3: 5}
-COINS_FILE = "coins.json"
 STEAL_BASE_CHANCE = 0.4
 STEAL_STEP = 0.2
 STEAL_MAX_CHANCE = 0.9
+BANK_ROBBERY_CHANCE = 0.05
+BANK_ZERO_CHANCE = 0.7
+DATA_FILE = "coins.json"
 
-STEAL_CHANCE = {}
-# ================== COINS STORAGE ==================
-DATA_FILE = "coins.json"  # залишаємо старий файл
-COINS = {}                 # залишаємо баланс гравців
-MARRIAGES = {}             # нове для шлюбів
-PENDING_MARRIAGES = {}
+# ================== STORAGE ==================
+COINS = {}
+MARRIAGES = {}
+INVENTORY = {}
 PROPOSALS = {}
-# структура:
-# PROPOSALS = {
-#   "partner_username": {
-#       "from": "username",
-#       "ring": "gold"
-#   }
-# }
-INVENTORY = {}  
-# структура:
-# INVENTORY = {
-#   "username": {
-#       "rings": ["silver", "gold"]
-#   }
-# }
+PENDING_MARRIAGES = {}
+DEPOSITS = {}
+STEAL_CHANCE = {}
 
-RINGS = {        # каблучки і їх ціни
+RINGS = {
     "silver": 200,
     "gold": 500,
     "diamond": 1000
 }
 
+# ================== DATA HANDLING ==================
 def load_data():
-    global COINS, MARRIAGES, INVENTORY, PROPOSALS
+    global COINS, MARRIAGES, INVENTORY, PROPOSALS, DEPOSITS
     try:
         with open(DATA_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -63,11 +53,13 @@ def load_data():
             MARRIAGES = data.get("marriages", {})
             INVENTORY = data.get("inventory", {})
             PROPOSALS = data.get("proposals", {})
+            DEPOSITS = data.get("deposits", {})
     except (FileNotFoundError, json.JSONDecodeError):
         COINS = {}
         MARRIAGES = {}
         INVENTORY = {}
         PROPOSALS = {}
+        DEPOSITS = {}
 
 def save_data():
     with open(DATA_FILE, "w", encoding="utf-8") as f:
@@ -75,61 +67,10 @@ def save_data():
             "coins": COINS,
             "marriages": MARRIAGES,
             "inventory": INVENTORY,
-            "proposals": PROPOSALS
+            "proposals": PROPOSALS,
+            "deposits": DEPOSITS
         }, f, ensure_ascii=False, indent=2)
 
-def is_married(username):
-    return username in MARRIAGES
-
-
-def get_shared_owner(username):
-    if not is_married(username):
-        return None
-    return username  # будь-хто з пари — ключ
-
-
-def get_balance(username):
-    if is_married(username):
-        return MARRIAGES[username]["shared"]
-    return COINS.get(username, 0)
-
-
-def spend_coins(username, amount):
-    if is_married(username):
-        if MARRIAGES[username]["shared"] < amount:
-            return False
-        MARRIAGES[username]["shared"] -= amount
-        return True
-    else:
-        if COINS.get(username, 0) < amount:
-            return False
-        COINS[username] -= amount
-        return True
-
-
-def add_coins_to_user(username, amount):
-    if is_married(username):
-        MARRIAGES[username]["shared"] += amount
-    else:
-        COINS[username] = COINS.get(username, 0) + amount
-
-# ================== ADMIN CHECK ==================
-def is_admin(update, context):
-    try:
-        member = context.bot.get_chat_member(
-            update.effective_chat.id,
-            update.effective_user.id
-        )
-        return member.status in ("administrator", "creator")
-    except Exception:
-        return False
-
-# ================== WORDS ==================
-with open("words.txt", "r", encoding="utf-8") as f:
-    WORDS = [w.strip().lower() for w in f.readlines()]
-shuffle(WORDS)
-
-# ================== GLOBAL TEXT HANDLER ==================
 def global_text_handler(update, context):
     if not update.message or not update.message.text:
         return
@@ -155,12 +96,48 @@ def global_text_handler(update, context):
         save_data()
         update.message.reply_text(f"🎉 @{username}, +50 монет")
 
+# ================== UTILITY ==================
+def is_married(username):
+    return username in MARRIAGES
+
+def get_shared_balance(username):
+    return MARRIAGES[username]["shared"] if is_married(username) else COINS.get(username, 0)
+
+def spend_coins(username, amount):
+    if is_married(username):
+        if MARRIAGES[username]["shared"] < amount:
+            return False
+        MARRIAGES[username]["shared"] -= amount
+        return True
+    else:
+        if COINS.get(username, 0) < amount:
+            return False
+        COINS[username] -= amount
+        return True
+
+def add_coins(username, amount):
+    if is_married(username):
+        MARRIAGES[username]["shared"] += amount
+    else:
+        COINS[username] = COINS.get(username, 0) + amount
+
+def is_admin(update, context):
+    try:
+        member = context.bot.get_chat_member(update.effective_chat.id, update.effective_user.id)
+        return member.status in ("administrator", "creator")
+    except Exception:
+        return False
+
+# ================== WORDS ==================
+with open("words.txt", "r", encoding="utf-8") as f:
+    WORDS = [w.strip().lower() for w in f.readlines()]
+shuffle(WORDS)
+
 # ================== GAME ==================
 def start(update, context):
     if context.chat_data.get("is_playing"):
         update.message.reply_text("Гра вже почалась")
         return GUESSING
-
     user = update.message.from_user
     context.chat_data["is_playing"] = True
     context.chat_data["current_player"] = user.id
@@ -187,29 +164,19 @@ def guesser(update, context):
     text = update.message.text.lower()
     user = update.message.from_user
     username = user.username or user.first_name
-
-    if (
-        context.chat_data.get("is_playing")
-        and user.id != context.chat_data.get("current_player")
-        and text == context.chat_data.get("current_word")
-    ):
+    if context.chat_data.get("is_playing") and user.id != context.chat_data.get("current_player") and text == context.chat_data.get("current_word"):
         update.message.reply_text(f"{user.first_name} вгадав слово!")
-
         rating = context.chat_data.setdefault("rating", {})
         rating[username] = rating.get(username, 0) + 1
-
         pos = sorted(rating.values(), reverse=True).index(rating[username]) + 1
-        COINS[username] = COINS.get(username, 0) + TOP_REWARD.get(pos, 0)
+        add_coins(username, TOP_REWARD.get(pos, 0))
         save_data()
-
         return CHOOSING_PLAYER
-
     return GUESSING
 
 def next_player(update, context):
     query = update.callback_query
     query.answer()
-
     user = query.from_user
     context.chat_data["current_player"] = user.id
     context.chat_data["current_word"] = choice(WORDS)
@@ -218,7 +185,6 @@ def next_player(update, context):
         InlineKeyboardButton("Подивитись слово", callback_data="look"),
         InlineKeyboardButton("Наступне слово", callback_data="next")
     ]]
-
     query.edit_message_text(
         f"[{user.first_name}](tg://user?id={user.id}) пояснює слово!",
         reply_markup=InlineKeyboardMarkup(keyboard),
@@ -243,360 +209,177 @@ def next_word(update, context):
         q.answer("Не можна", show_alert=True)
     return GUESSING
 
-# ================== COMMANDS ==================
+# ================== WALLET ==================
 def wallet(update, context):
     username = update.message.from_user.username or update.message.from_user.first_name
-
-    # Якщо гравець у шлюбі
-    if username in MARRIAGES:
-        shared_balance = MARRIAGES[username]["shared"]
-        partner_name = MARRIAGES[username]["partner"]
-        update.message.reply_text(
-            f"💑 @{username} у шлюбі з @{partner_name}\n"
-            f"💰 Спільний баланс: {shared_balance} монет"
-        )
+    if is_married(username):
+        partner = MARRIAGES[username]["partner"]
+        shared = MARRIAGES[username]["shared"]
+        update.message.reply_text(f"💑 @{username} у шлюбі з @{partner}\n💰 Спільний баланс: {shared}")
     else:
-        # Інакше показуємо особистий баланс
-        update.message.reply_text(f"@{username}, у вас {COINS.get(username, 0)} монет")
+        balance = COINS.get(username, 0)
+        update.message.reply_text(f"@{username}, у вас {balance} монет")
+    deposit = DEPOSITS.get(username, 0)
+    if deposit > 0:
+        update.message.reply_text(f"🏦 Депозит: {deposit} монет")
 
-def add_coins(update, context):
+# ================== COINS COMMANDS ==================
+def add_coins_cmd(update, context):
     if not is_admin(update, context):
         return update.message.reply_text("⛔ Тільки адмін")
-
     if not update.message.reply_to_message or len(context.args) != 1:
-        return update.message.reply_text("❗ /add 10 (reply)")
-
+        return update.message.reply_text("❗ /add <кількість> (reply)")
     amount = int(context.args[0])
     user = update.message.reply_to_message.from_user
     username = user.username or user.first_name
-
-    COINS[username] = COINS.get(username, 0) + amount
+    add_coins(username, amount)
     save_data()
     update.message.reply_text(f"✅ @{username} +{amount}")
 
-def deduct_coins(update, context):
+def deduct_coins_cmd(update, context):
     if not is_admin(update, context):
         return update.message.reply_text("⛔ Тільки адмін")
-
     if not update.message.reply_to_message or len(context.args) != 1:
-        return update.message.reply_text("❗ /deduct 5 (reply)")
-
+        return update.message.reply_text("❗ /deduct <кількість> (reply)")
     amount = int(context.args[0])
     user = update.message.reply_to_message.from_user
     username = user.username or user.first_name
-
-    COINS[username] = max(COINS.get(username, 0) - amount, 0)
-    save_coins()
+    if is_married(username):
+        shared = MARRIAGES[username]["shared"]
+        if shared < amount:
+            return update.message.reply_text("❗ Недостатньо спільного балансу")
+        MARRIAGES[username]["shared"] -= amount
+    else:
+        COINS[username] = max(COINS.get(username,0)-amount,0)
+    save_data()
     update.message.reply_text(f"✅ @{username} -{amount}")
 
 def gift_coins(update, context):
     if not update.message.reply_to_message or len(context.args) != 1:
-        return update.message.reply_text("❗ Використання: /gift 10 (reply)")
-
+        return update.message.reply_text("❗ /gift <кількість> (reply)")
     try:
         amount = int(context.args[0])
-        if amount <= 0:
-            raise ValueError
+        if amount <= 0: raise ValueError
     except ValueError:
         return update.message.reply_text("❗ Кількість має бути додатнім числом")
-
     from_user = update.message.from_user
     to_user = update.message.reply_to_message.from_user
-
     from_name = from_user.username or from_user.first_name
     to_name = to_user.username or to_user.first_name
-
-    if COINS.get(from_name, 0) < amount:
+    balance = get_shared_balance(from_name)
+    if balance < amount:
         return update.message.reply_text("💸 Недостатньо монет")
-
-    COINS[from_name] -= amount
-    COINS[to_name] = COINS.get(to_name, 0) + amount
+    spend_coins(from_name, amount)
+    add_coins(to_name, amount)
     save_data()
+    update.message.reply_text(f"🎁 @{from_name} подарував @{to_name} {amount} монет")
 
-    update.message.reply_text(
-        f"🎁 @{from_name} подарував @{to_name} {amount} монет"
-    )
-
+# ================== STEAL ==================
 def steal_coins(update, context):
     if not update.message.reply_to_message:
-        return update.message.reply_text("❗ Використовуй /steal відповіддю")
-
+        return update.message.reply_text("❗ /steal у відповідь")
     thief = update.message.from_user
     victim = update.message.reply_to_message.from_user
-
     thief_name = thief.username or thief.first_name
     victim_name = victim.username or victim.first_name
-
-    if thief.id == victim.id:
+    if thief_name == victim_name:
         return update.message.reply_text("🤨 Сам у себе красти не можна")
-
-    # поточний шанс
-    chance = STEAL_CHANCE.get(thief_name)
-    if chance is None:
-        chance = STEAL_BASE_CHANCE
-
-    # перевірка
+    chance = STEAL_CHANCE.get(thief_name, STEAL_BASE_CHANCE)
     if random.random() < chance:
         fine = 50
-        COINS[thief_name] = max(COINS.get(thief_name, 0) - fine, 0)
-
-        # 🔥 скид шансів
+        spend_coins(thief_name, fine)
         STEAL_CHANCE[thief_name] = STEAL_BASE_CHANCE
         save_data()
-
-        return update.message.reply_text(
-            f"🚓 @{thief_name} попався!\n"
-            f"💸 Штраф {fine} монет\n"
-            f"🔄 Шанс скинуто до 40%"
-        )
-
-    # успішна крадіжка
-    steal_amount = random.randint(0, 20)
-    victim_balance = COINS.get(victim_name, 0)
+        return update.message.reply_text(f"🚓 @{thief_name} попався!\n💸 Штраф {fine} монет\n🔄 Шанс скинуто до 40%")
+    steal_amount = random.randint(0,20)
+    victim_balance = get_shared_balance(victim_name)
     real_amount = min(steal_amount, victim_balance)
-
-    COINS[victim_name] = victim_balance - real_amount
-    COINS[thief_name] = COINS.get(thief_name, 0) + real_amount
-
-    # 📈 підвищуємо шанс
-    new_chance = min(chance + STEAL_STEP, STEAL_MAX_CHANCE)
-    STEAL_CHANCE[thief_name] = new_chance
-
+    spend_coins(victim_name, real_amount)
+    add_coins(thief_name, real_amount)
+    STEAL_CHANCE[thief_name] = min(chance + STEAL_STEP, STEAL_MAX_CHANCE)
     save_data()
+    update.message.reply_text(f"🕵️ @{thief_name} поцупив {real_amount} монет у @{victim_name}!\n⚠️ Новий шанс попастися: {int(STEAL_CHANCE[thief_name]*100)}%")
 
-    update.message.reply_text(
-        f"🕵️ @{thief_name} поцупив {real_amount} монет у @{victim_name}!\n"
-        f"⚠️ Новий шанс попастися: {int(new_chance * 100)}%"
-    )
-
-def top_money(update, context):
-    if not COINS:
-        return update.message.reply_text("Поки що немає монет")
-
-    top = sorted(COINS.items(), key=lambda x: x[1], reverse=True)[:5]
-    msg = "\n".join(f"{i+1}. @{u}: {c}" for i, (u, c) in enumerate(top))
-    update.message.reply_text(f"💰 Топ монет:\n{msg}")
-
-def top_messages(update, context):
-    stats = context.chat_data.get("chat_messages", {})
-    if not stats:
-        return update.message.reply_text("Немає статистики")
-
-    top = sorted(stats.items(), key=lambda x: x[1], reverse=True)[:5]
-    msg = "\n".join(f"{i+1}. {u}: {c}" for i, (u, c) in enumerate(top))
-    update.message.reply_text(f"📝 Топ повідомлень:\n{msg}")
-
-# ================== MARRIAGE & RINGS COMMANDS ==================
-
+# ================== RINGS & MARRIAGE ==================
 def buy_ring(update, context):
     if len(context.args) != 1:
-        return update.message.reply_text(
-            f"❗ /buy_ring <тип> | Доступні: {', '.join(RINGS.keys())}"
-        )
-
+        return update.message.reply_text(f"❗ /buy_ring <тип> | Доступні: {', '.join(RINGS.keys())}")
     ring = context.args[0].lower()
-    if ring not in RINGS:
-        return update.message.reply_text("❗ Невірний тип каблучки")
-
+    if ring not in RINGS: return update.message.reply_text("❗ Невірний тип каблучки")
     username = update.message.from_user.username or update.message.from_user.first_name
     price = RINGS[ring]
-
-    if not spend_coins(username, price):
-        return update.message.reply_text("💸 Недостатньо коштів")
-
-    INVENTORY.setdefault(username, {"rings": []})
+    if not spend_coins(username, price): return update.message.reply_text("💸 Недостатньо монет")
+    INVENTORY.setdefault(username, {"rings":[]})
     INVENTORY[username]["rings"].append(ring)
-
     save_data()
     update.message.reply_text(f"💍 @{username} купив каблучку {ring}")
-    
+
 def marry(update, context):
     if not update.message.reply_to_message:
-        return update.message.reply_text("❗ Використай /marry у відповідь на повідомлення")
-
+        return update.message.reply_text("❗ /marry у відповідь на повідомлення")
     proposer = update.message.from_user
     partner = update.message.reply_to_message.from_user
-
     proposer_name = proposer.username or proposer.first_name
     partner_name = partner.username or partner.first_name
-
     if proposer_name in MARRIAGES or partner_name in MARRIAGES:
         return update.message.reply_text("💔 Хтось уже в шлюбі")
-
-    if proposer_name not in INVENTORY:
-        return update.message.reply_text("❗ У тебе немає каблучки")
-
-    ring = INVENTORY[proposer_name]
-
-    PENDING_MARRIAGES[partner_name] = {
-        "from": proposer_name,
-        "ring": ring
-    }
-
-    keyboard = InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("💍 Прийняти", callback_data="marry_accept"),
-            InlineKeyboardButton("❌ Відхилити", callback_data="marry_decline")
-        ]
-    ])
-
-    update.message.reply_text(
-        f"💌 @{partner_name}, тобі зробили пропозицію!\n"
-        f"Каблучка: {ring}",
-        reply_markup=keyboard
-    )
-
-def accept_marriage(update, context):
-    query = update.callback_query
-    query.answer()
-
-    accepter = query.from_user
-    accepter_name = accepter.username or accepter.first_name
-
-    if accepter_name not in PROPOSALS:
-        return query.edit_message_text("❗ Пропозиція більше не дійсна")
-
-    proposal = PROPOSALS[accepter_name]
-    proposer_name = proposal["from"]
-    ring = proposal["ring"]
-
-    # списуємо 500 зі спільного / особистого балансу того, хто робив пропозицію
-    if COINS.get(proposer_name, 0) < 500:
-        PROPOSALS.pop(accepter_name, None)
-        save_data()
-        return query.edit_message_text("💸 Недостатньо монет для одруження")
-
-    COINS[proposer_name] -= 500
-
-    # передаємо каблучку тому, хто прийняв
-    INVENTORY.setdefault(accepter_name, [])
-    INVENTORY[accepter_name].append(ring)
-
-    # прибираємо каблучку у того, хто робив пропозицію
-    if proposer_name in INVENTORY and ring in INVENTORY[proposer_name]:
-        INVENTORY[proposer_name].remove(ring)
-
-    # створюємо спільний баланс
-    shared_balance = COINS.get(proposer_name, 0) + COINS.get(accepter_name, 0)
-    COINS[proposer_name] = 0
-    COINS[accepter_name] = 0
-
-    MARRIAGES[proposer_name] = {
-        "partner": accepter_name,
-        "shared": shared_balance
-    }
-    MARRIAGES[accepter_name] = {
-        "partner": proposer_name,
-        "shared": shared_balance
-    }
-
-    PROPOSALS.pop(accepter_name, None)
-    save_data()
-
-    query.edit_message_text(
-        f"💒 @{proposer_name} та @{accepter_name} одружилися!\n"
-        f"💍 Каблучка залишилась у @{accepter_name}\n"
-        f"💰 Спільний баланс: {shared_balance}"
-    )
-    
-    save_data()
-    update.message.reply_text(
-        f"💌 @{u} робить пропозицію @{p}!\n"
-        f"💍 Каблучка: {ring}\n"
-        f"💰 Вартість: 500 монет",
-        reply_markup=keyboard
-    )
-
-def decline_marriage(update, context):
-    query = update.callback_query
-    query.answer()
-
-    name = query.from_user.username or query.from_user.first_name
-
-    if name not in PROPOSALS:
-        return query.edit_message_text("❗ Пропозиція вже не дійсна")
-
-    proposer = PROPOSALS[name]["from"]
-    PROPOSALS.pop(name, None)
-    save_data()
-
-    query.edit_message_text(f"💔 @{name} відхилив(ла) пропозицію від @{proposer}")
-
-def divorce(update, context):
-    u = update.message.from_user.username or update.message.from_user.first_name
-
-    if u not in MARRIAGES:
-        return update.message.reply_text("❗ Ти не в шлюбі")
-
-    p = MARRIAGES[u]["partner"]
-    shared = MARRIAGES[u]["shared"]
-
-    if shared < 500:
-        return update.message.reply_text("💸 Недостатньо коштів для розлучення")
-
-    shared -= 500
-
-    a = random.randint(0, shared)
-    b = shared - a
-
-    COINS[u] = a
-    COINS[p] = b
-
-    MARRIAGES.pop(u)
-    MARRIAGES.pop(p)
-
-    save_data()
-    update.message.reply_text(
-        f"💔 Розлучення завершено\n"
-        f"💰 @{u}: {a}\n"
-        f"💰 @{p}: {b}"
-    )
+    rings = INVENTORY.get(proposer_name, {}).get("rings", [])
+    if not rings:
+        return update.message.reply_text("❗ Купи каблучку")
+    ring = rings[-1]
+    PENDING_MARRIAGES[partner_name] = {"from": proposer_name, "ring": ring}
+    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("💍 Прийняти", callback_data="marry_accept"), InlineKeyboardButton("❌ Відхилити", callback_data="marry_decline")]])
+    update.message.reply_text(f"💌 @{partner_name}, тобі зробили пропозицію!\nКаблучка: {ring}", reply_markup=keyboard)
 
 def marriage_callback(update, context):
     query = update.callback_query
     query.answer()
-
-    user = query.from_user
-    username = user.username or user.first_name
-
+    username = query.from_user.username or query.from_user.first_name
     if username not in PENDING_MARRIAGES:
-        return query.edit_message_text("⛔ Пропозиція недійсна")
-
+        return query.edit_message_text("❌ Пропозиція недійсна")
     data = PENDING_MARRIAGES.pop(username)
     proposer = data["from"]
     ring = data["ring"]
-
     if query.data == "marry_decline":
-        return query.edit_message_text("💔 Пропозицію відхилено")
-
-    # ACCEPT
-    shared_balance = COINS.get(username, 0) + COINS.get(proposer, 0)
-
+        return query.edit_message_text(f"💔 @{username} відхилив пропозицію від @{proposer}")
+    shared_balance = COINS.get(username,0) + COINS.get(proposer,0)
     COINS[username] = 0
     COINS[proposer] = 0
-
     MARRIAGES[username] = {"partner": proposer, "shared": shared_balance}
     MARRIAGES[proposer] = {"partner": username, "shared": shared_balance}
-
-    INVENTORY.pop(proposer, None)
-    INVENTORY[username] = ring
-
+    INVENTORY.setdefault(username, {"rings":[]})
+    INVENTORY[username]["rings"].append(ring)
+    INVENTORY[proposer]["rings"].remove(ring)
     save_data()
+    query.edit_message_text(f"💒 @{username} та @{proposer} одружились!\n💍 Каблучка залишилась у @{username}\n💰 Спільний баланс: {shared_balance}")
 
-    query.edit_message_text(
-        f"💒 @{username} та @{proposer} одружились!\n"
-        f"💰 Спільний баланс: {shared_balance}"
-    )
+def divorce(update, context):
+    username = update.message.from_user.username or update.message.from_user.first_name
+    if username not in MARRIAGES:
+        return update.message.reply_text("❗ Ти не в шлюбі")
+    partner = MARRIAGES[username]["partner"]
+    shared = MARRIAGES[username]["shared"]
+    if shared < 500: return update.message.reply_text("💸 Недостатньо коштів для розлучення")
+    shared -= 500
+    a = random.randint(0, shared)
+    b = shared - a
+    COINS[username] = a
+    COINS[partner] = b
+    MARRIAGES.pop(username)
+    MARRIAGES.pop(partner)
+    save_data()
+    update.message.reply_text(f"💔 Розлучення завершено\n💰 @{username}: {a}\n💰 @{partner}: {b}")
 
 # ================== MAIN ==================
 def main():
-    load_data()  # 🔥 КРИТИЧНО
-
+    load_data()
     updater = Updater(os.environ["TOKEN"], use_context=True)
     dp = updater.dispatcher
 
+    # Message handler
     dp.add_handler(MessageHandler(Filters.text & ~Filters.command, global_text_handler), group=0)
 
+    # Game conversation
     conv = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
         states={
@@ -612,19 +395,22 @@ def main():
     )
     dp.add_handler(conv, group=1)
 
+    # Commands
     dp.add_handler(CommandHandler("wallet", wallet))
     dp.add_handler(CommandHandler("top_money", top_money))
     dp.add_handler(CommandHandler("top", top_messages))
-    dp.add_handler(CommandHandler("add", add_coins))
-    dp.add_handler(CommandHandler("deduct", deduct_coins))
+    dp.add_handler(CommandHandler("add", add_coins_cmd))
+    dp.add_handler(CommandHandler("deduct", deduct_coins_cmd))
     dp.add_handler(CommandHandler("gift", gift_coins))
     dp.add_handler(CommandHandler("steal", steal_coins))
     dp.add_handler(CommandHandler("buy_ring", buy_ring))
     dp.add_handler(CommandHandler("marry", marry))
     dp.add_handler(CommandHandler("divorce", divorce))
     dp.add_handler(CallbackQueryHandler(marriage_callback, pattern="^marry_"))
-    dp.add_handler(CallbackQueryHandler(accept_marriage, pattern="^accept_marriage$"))
-    dp.add_handler(CallbackQueryHandler(decline_marriage, pattern="^decline_marriage$"))
+    dp.add_handler(
+    MessageHandler(Filters.text & ~Filters.command, global_text_handler),
+    group=0
+)
 
     updater.start_polling()
     updater.idle()
