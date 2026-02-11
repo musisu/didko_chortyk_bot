@@ -203,7 +203,7 @@ def deposit_withdraw(update, context):
     save_data()
     update.message.reply_text(f"🏦 @{username} зняв {amount} монет з депозиту")
 
-def deposit_daily_interest():
+def deposit_daily_interest(context):
     """Функція для щоденного нарахування 5% від депозиту"""
     for user, bal in DEPOSITS.items():
         if bal > 0:
