@@ -44,6 +44,19 @@ PENDING_MARRIAGES = {}
 DEPOSITS = {}
 STEAL_CHANCE = {}
 
+MESSAGE_STATS = {
+    "daily": {},
+    "weekly": {},
+    "monthly": {},
+    "all_time": {}
+}
+
+MESSAGE_COUNTS = {
+    "daily": 0,
+    "weekly": 0,
+    "monthly": 0,
+    "all_time": 0
+}
 # Структура для підрахунку постів
 POST_STATS = {
     "daily": {},    # {"username": count}
@@ -77,7 +90,7 @@ def load_data():
             INVENTORY = data.get("inventory", {})
             PROPOSALS = data.get("proposals", {})
             DEPOSITS = data.get("deposits", {})
-    except (FileNotFoundError, json.JSONDecodeError):
+    except (FileNotFoundError, json.JSONDecodeError ):
         COINS = {}
         MARRIAGES = {}
         INVENTORY = {}
@@ -102,9 +115,11 @@ def global_text_handler(update, context):
     user = update.message.from_user
     username = user.username or user.first_name
 
-    # 📝 Загальний лічильник повідомлень
-    stats = context.chat_data.setdefault("chat_messages", {})
-    stats[username] = stats.get(username, 0) + 1
+# 📝 Статистика повідомлень
+for period in ["daily", "weekly", "monthly", "all_time"]:
+    MESSAGE_STATS.setdefault(period, {})
+    MESSAGE_STATS[period][username] = MESSAGE_STATS[period].get(username, 0) + 1
+    MESSAGE_COUNTS[period] += 1
 
     # 👹 "гетеро"
     if "гетеро" in text:
@@ -523,6 +538,79 @@ def top_messages(update, context):
     msg = "\n".join(f"{i+1}. {u}: {c}" for i, (u, c) in enumerate(top))
     update.message.reply_text(f"📝 Топ повідомлень:\n{msg}")
 
+def send_daily_message_stats(context):
+    msg = "📊 Топ повідомлень за день:\n\n"
+
+    top_users = sorted(
+        MESSAGE_STATS["daily"].items(),
+        key=lambda x: x[1],
+        reverse=True
+    )[:5]
+
+    if top_users:
+        for i, (u, c) in enumerate(top_users):
+            msg += f"{i+1}. @{u}: {c}\n"
+    else:
+        msg += "Немає повідомлень\n"
+
+    msg += f"\nВсього повідомлень: {MESSAGE_COUNTS['daily']}"
+
+    context.bot.send_message(chat_id=HASHTAG_LOG_CHAT, text=msg)
+
+    # Скидання
+    MESSAGE_STATS["daily"] = {}
+    MESSAGE_COUNTS["daily"] = 0
+
+    save_data()
+
+def send_weekly_message_stats(context):
+    msg = "📊 Топ повідомлень за тиждень:\n\n"
+
+    top_users = sorted(
+        MESSAGE_STATS["weekly"].items(),
+        key=lambda x: x[1],
+        reverse=True
+    )[:5]
+
+    if top_users:
+        for i, (u, c) in enumerate(top_users):
+            msg += f"{i+1}. @{u}: {c}\n"
+    else:
+        msg += "Немає повідомлень\n"
+
+    msg += f"\nВсього повідомлень: {MESSAGE_COUNTS['weekly']}"
+
+    context.bot.send_message(chat_id=HASHTAG_LOG_CHAT, text=msg)
+
+    MESSAGE_STATS["weekly"] = {}
+    MESSAGE_COUNTS["weekly"] = 0
+
+    save_data()
+
+def send_monthly_message_stats(context):
+    msg = "📊 Топ повідомлень за місяць:\n\n"
+
+    top_users = sorted(
+        MESSAGE_STATS["monthly"].items(),
+        key=lambda x: x[1],
+        reverse=True
+    )[:5]
+
+    if top_users:
+        for i, (u, c) in enumerate(top_users):
+            msg += f"{i+1}. @{u}: {c}\n"
+    else:
+        msg += "Немає повідомлень\n"
+
+    msg += f"\nВсього повідомлень: {MESSAGE_COUNTS['monthly']}"
+
+    context.bot.send_message(chat_id=HASHTAG_LOG_CHAT, text=msg)
+
+    MESSAGE_STATS["monthly"] = {}
+    MESSAGE_COUNTS["monthly"] = 0
+
+    save_data()
+
 def post_stats_report(update, context):
     username = update.message.from_user.username or update.message.from_user.first_name
 
@@ -603,6 +691,10 @@ def main():
     job_queue.run_daily(send_monthly_stats, time=time(hour=10, minute=0, tzinfo=KYIV_TZ), days=(1,))
 
     job_queue.run_daily(deposit_daily_interest, time=time(hour=0, minute=0, tzinfo=KYIV_TZ))
+
+    job_queue.run_daily(send_daily_message_stats, time=time(hour=0, minute=0, tzinfo=KYIV_TZ))
+    job_queue.run_daily(send_weekly_message_stats, time=time(hour=6, minute=0, tzinfo=KYIV_TZ), days=(0,))
+    job_queue.run_monthly(send_monthly_message_stats, when=time(hour=10, minute=0, tzinfo=KYIV_TZ), day=1)
 
     # Commands
     dp.add_handler(CommandHandler("wallet", wallet))
