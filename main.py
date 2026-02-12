@@ -102,7 +102,7 @@ def global_text_handler(update, context):
     user = update.message.from_user
     username = user.username or user.first_name
 
-    # 📝 message counter
+    # 📝 Загальний лічильник повідомлень
     stats = context.chat_data.setdefault("chat_messages", {})
     stats[username] = stats.get(username, 0) + 1
 
@@ -113,35 +113,27 @@ def global_text_handler(update, context):
         update.message.reply_text("👹")
         update.message.reply_text(f"@{username}, -1 монета")
 
-     # #️⃣ Нагорода за хештег і статистика постів
+    # ================= HASH LOGIC =================
     if "#" in text and update.message.chat.id == SPECIAL_HASHTAG_CHAT:
-        # Нагородження монетами
+
+        # 🎁 Нарахування монет
         COINS[username] = COINS.get(username, 0) + HASHTAG_REWARD
+
         try:
             context.bot.send_message(
                 chat_id=HASHTAG_LOG_CHAT,
                 text=f"🎉 @{username} отримав(ла) {HASHTAG_REWARD} монет за пост!"
             )
         except Exception as e:
-            print(f"Помилка при надсиланні в лог-чат: {e}")
+            print(f"Помилка лог-чату: {e}")
 
-    # Статистика постів завжди
-    for period in ["daily", "weekly", "monthly", "all_time"]:
-        POST_STATS.setdefault(period, {})
-        POST_STATS[period][username] = POST_STATS[period].get(username, 0) + 1
-        POST_COUNTS[period] += 1
-
-    save_data()
-
-    # Іменна статистика постів
-    for period in ["daily", "weekly", "monthly", "all_time"]:
+        # 📊 Статистика постів
+        for period in ["daily", "weekly", "monthly", "all_time"]:
             POST_STATS.setdefault(period, {})
             POST_STATS[period][username] = POST_STATS[period].get(username, 0) + 1
             POST_COUNTS[period] += 1
 
-    # Збереження всіх даних
-    save_data()
-    
+        save_data()
 #=================DEPOSITS===================
 
 def deposit_balance(update, context):
