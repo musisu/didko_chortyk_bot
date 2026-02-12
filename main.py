@@ -178,10 +178,27 @@ def deposit_withdraw(update, context):
     today = datetime.today().weekday()
 
     if today not in WITHDRAWAL_DAYS:
-        return update.message.reply_text("❌ Вивід депозиту доступний тільки в понеділок та четвер")
+        return update.message.reply_text(
+            "❌ Вивід депозиту доступний тільки в понеділок та четвер"
+        )
 
-    if username not in DEPOSITS or DEPOSITS[username] == 0:
+    if len(context.args) != 1:
+        return update.message.reply_text("❗ Використання: /deposit_withdraw <сума>")
+
+    try:
+        amount = int(context.args[0])
+        if amount <= 0:
+            raise ValueError
+    except ValueError:
+        return update.message.reply_text("❗ Сума має бути додатнім числом")
+
+    current_deposit = DEPOSITS.get(username, 0)
+
+    if current_deposit <= 0:
         return update.message.reply_text("❌ У вас немає депозиту")
+
+    if amount > current_deposit:
+        return update.message.reply_text("❌ На депозиті недостатньо коштів")
 
     # шанс пограбування
     if random.random() < BANK_ROBBERY_CHANCE:
@@ -192,13 +209,20 @@ def deposit_withdraw(update, context):
                 robbed = True
         save_data()
         if robbed:
-            return update.message.reply_text("💥 Банк пограбували! Частина депозитів обнулилася")
+            return update.message.reply_text(
+                "💥 Банк пограбували! Частина депозитів обнулилася"
+            )
 
-    amount = DEPOSITS.get(username, 0)
+    # зняття
+    DEPOSITS[username] -= amount
     COINS[username] = COINS.get(username, 0) + amount
-    DEPOSITS[username] = 0
+
     save_data()
-    update.message.reply_text(f"🏦 @{username} зняв {amount} монет з депозиту")
+
+    update.message.reply_text(
+        f"🏦 @{username} зняв {amount} монет\n"
+        f"💰 Залишок депозиту: {DEPOSITS[username]}"
+    )
 
 def deposit_daily_interest(context):
     """Функція для щоденного нарахування 5% від депозиту"""
