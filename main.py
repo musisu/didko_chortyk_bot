@@ -106,8 +106,8 @@ def global_text_handler(update, context):
     username = user.username or user.first_name
 
     # 📝 Щоденна статистика повідомлень
-MESSAGE_STATS[username] = MESSAGE_STATS.get(username, 0) + 1
-MESSAGE_COUNT += 1
+    MESSAGE_STATS[username] = MESSAGE_STATS.get(username, 0) + 1
+    MESSAGE_COUNT += 1
 
     # 👹 "гетеро"
     if "гетеро" in text:
