@@ -44,19 +44,9 @@ PENDING_MARRIAGES = {}
 DEPOSITS = {}
 STEAL_CHANCE = {}
 
-MESSAGE_STATS = {
-    "daily": {},
-    "weekly": {},
-    "monthly": {},
-    "all_time": {}
-}
+MESSAGE_STATS = {}
+MESSAGE_COUNT = 0
 
-MESSAGE_COUNTS = {
-    "daily": 0,
-    "weekly": 0,
-    "monthly": 0,
-    "all_time": 0
-}
 # Структура для підрахунку постів
 POST_STATS = {
     "daily": {},    # {"username": count}
@@ -115,11 +105,9 @@ def global_text_handler(update, context):
     user = update.message.from_user
     username = user.username or user.first_name
 
-    # 📝 Статистика повідомлень
-    for period in ["daily", "weekly", "monthly", "all_time"]:
-        MESSAGE_STATS.setdefault(period, {})
-        MESSAGE_STATS[period][username] = MESSAGE_STATS[period].get(username, 0) + 1
-        MESSAGE_COUNTS[period] += 1
+    # 📝 Щоденна статистика повідомлень
+MESSAGE_STATS[username] = MESSAGE_STATS.get(username, 0) + 1
+MESSAGE_COUNT += 1
 
     # 👹 "гетеро"
     if "гетеро" in text:
@@ -530,102 +518,56 @@ def top_money(update, context):
     update.message.reply_text(f"💰 Топ монет:\n{msg}")
 
 def send_daily_message_stats(context):
+    global MESSAGE_STATS, MESSAGE_COUNT
+
+    if not MESSAGE_STATS:
+        context.bot.send_message(
+            chat_id=HASHTAG_LOG_CHAT,
+            text="📊 За сьогодні не було повідомлень"
+        )
+        return
+
+    sorted_users = sorted(
+        MESSAGE_STATS.items(),
+        key=lambda x: x[1],
+        reverse=True
+    )
+
     msg = "📊 Топ повідомлень за день:\n\n"
 
-    top_users = sorted(
-        MESSAGE_STATS["daily"].items(),
-        key=lambda x: x[1],
-        reverse=True
-    )[:5]
+    rewards = {0: 25, 1: 15, 2: 5}
 
-    if top_users:
-        for i, (u, c) in enumerate(top_users):
-            msg += f"{i+1}. @{u}: {c}\n"
-    else:
-        msg += "Немає повідомлень\n"
+    for i, (user, count) in enumerate(sorted_users[:5]):
+        msg += f"{i+1}. @{user}: {count}\n"
 
-    msg += f"\nВсього повідомлень: {MESSAGE_COUNTS['daily']}"
+        # Нарахування бонусів топ-3
+        if i in rewards:
+            bonus = rewards[i]
+            COINS[user] = COINS.get(user, 0) + bonus
+            msg += f"   💰 +{bonus} монет\n"
 
-    context.bot.send_message(chat_id=HASHTAG_LOG_CHAT, text=msg)
-
-    # Скидання
-    MESSAGE_STATS["daily"] = {}
-    MESSAGE_COUNTS["daily"] = 0
-
-    save_data()
-
-def send_weekly_message_stats(context):
-    msg = "📊 Топ повідомлень за тиждень:\n\n"
-
-    top_users = sorted(
-        MESSAGE_STATS["weekly"].items(),
-        key=lambda x: x[1],
-        reverse=True
-    )[:5]
-
-    if top_users:
-        for i, (u, c) in enumerate(top_users):
-            msg += f"{i+1}. @{u}: {c}\n"
-    else:
-        msg += "Немає повідомлень\n"
-
-    msg += f"\nВсього повідомлень: {MESSAGE_COUNTS['weekly']}"
+    msg += f"\nВсього повідомлень: {MESSAGE_COUNT}"
 
     context.bot.send_message(chat_id=HASHTAG_LOG_CHAT, text=msg)
 
-    MESSAGE_STATS["weekly"] = {}
-    MESSAGE_COUNTS["weekly"] = 0
-
-    save_data()
-
-def send_monthly_message_stats(context):
-    msg = "📊 Топ повідомлень за місяць:\n\n"
-
-    top_users = sorted(
-        MESSAGE_STATS["monthly"].items(),
-        key=lambda x: x[1],
-        reverse=True
-    )[:5]
-
-    if top_users:
-        for i, (u, c) in enumerate(top_users):
-            msg += f"{i+1}. @{u}: {c}\n"
-    else:
-        msg += "Немає повідомлень\n"
-
-    msg += f"\nВсього повідомлень: {MESSAGE_COUNTS['monthly']}"
-
-    context.bot.send_message(chat_id=HASHTAG_LOG_CHAT, text=msg)
-
-    MESSAGE_STATS["monthly"] = {}
-    MESSAGE_COUNTS["monthly"] = 0
+    # Обнулення на новий день
+    MESSAGE_STATS = {}
+    MESSAGE_COUNT = 0
 
     save_data()
 
 def top_messages(update, context):
-    period = "daily"
+    if not MESSAGE_STATS:
+        return update.message.reply_text("Немає статистики за сьогодні")
 
-    if context.args:
-        arg = context.args[0].lower()
-        if arg in ["daily", "weekly", "monthly", "all"]:
-            period = "all_time" if arg == "all" else arg
-
-    stats = MESSAGE_STATS.get(period, {})
-    if not stats:
-        return update.message.reply_text("Немає статистики")
-
-    top = sorted(stats.items(), key=lambda x: x[1], reverse=True)[:5]
+    top = sorted(MESSAGE_STATS.items(), key=lambda x: x[1], reverse=True)[:5]
 
     msg = "\n".join(
         f"{i+1}. @{u}: {c}"
         for i, (u, c) in enumerate(top)
     )
 
-    total = MESSAGE_COUNTS.get(period, 0)
-
-    update.message.reply_text(
-        f"📝 Топ повідомлень ({period}):\n\n{msg}\n\nВсього: {total}"
-    )
+    update.message.reply_text(f"📝 Топ сьогодні:\n\n{msg}")
 
 def post_stats_report(update, context):
     username = update.message.from_user.username or update.message.from_user.first_name
@@ -709,8 +651,6 @@ def main():
     job_queue.run_daily(deposit_daily_interest, time=time(hour=0, minute=0, tzinfo=KYIV_TZ))
 
     job_queue.run_daily(send_daily_message_stats, time=time(hour=0, minute=0, tzinfo=KYIV_TZ))
-    job_queue.run_daily(send_weekly_message_stats, time=time(hour=6, minute=0, tzinfo=KYIV_TZ), days=(0,))
-    job_queue.run_monthly(send_monthly_message_stats, when=time(hour=10, minute=0, tzinfo=KYIV_TZ), day=1)
 
     # Commands
     dp.add_handler(CommandHandler("wallet", wallet))
